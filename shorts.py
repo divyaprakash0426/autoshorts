@@ -102,149 +102,183 @@ class _SecondsTime:
 
 
 def detect_video_scenes_gpu(video_path: Path, threshold: float = 27.0) -> List[Tuple[_SecondsTime, _SecondsTime]]:
-    """Detect scenes in the provided video file using GPU acceleration.
+    """Detect scenes matching PySceneDetect ContentDetector, but with GPU-assisted I/O.
 
-    Computes frame-to-frame difference on GPU and applies a threshold
-    to identify scene cuts.
+    This implementation replicates scenedetect.detectors.ContentDetector (v0.6.7)
+    semantics to produce identical scene cuts:
+      - Frames are downscaled to an effective width of ~256 px (like SceneManager.auto_downscale).
+      - Frame score is the mean absolute difference between adjacent frames in HSV space
+        (per-channel: hue, saturation, value), averaged with equal weights.
+      - Cuts are produced via the same FlashFilter MERGE policy with min_scene_len=15 frames.
+      - Scene list is generated exactly like SceneManager.get_scene_list(start_in_scene=False):
+        if no cuts are found, returns an empty list.
 
-    Parameters
-    ----------
-    video_path: Path
-        Path to the video file.
-    threshold: float
-        Threshold for scene change detection (scaled to pixel difference).
-
-    Returns
-    -------
-    List[Tuple[_SecondsTime, _SecondsTime]]
-        List of ``(start, end)`` timecodes for each detected scene.
+    GPU usage: frames are decoded/resized with decord (GPU if available). HSV conversion uses
+    OpenCV on CPU to match ContentDetector exactly. The difference/thresholding logic follows
+    the original algorithm.
     """
+    import cv2
 
-    # Check for GPU availability for decord
-    ctx = gpu(0) if torch.cuda.is_available() else cpu(0)
-
+    # 1) Determine original size (CPU), compute SceneDetect-like downscale factor.
     try:
-        # Determine size on CPU first
-        vr_cpu = VideoReader(str(video_path), ctx=cpu(0))
-        h, w, _ = vr_cpu[0].shape
-        del vr_cpu
+        vr_probe = VideoReader(str(video_path), ctx=cpu(0))
+        h0, w0, _ = vr_probe[0].shape
+        fps = float(vr_probe.get_avg_fps())
+        del vr_probe
+    except Exception:
+        # Fallback: open with default context just to probe
+        vr_probe = VideoReader(str(video_path))
+        h0, w0, _ = vr_probe[0].shape
+        fps = float(vr_probe.get_avg_fps())
+        del vr_probe
 
-        # Resize factor 4
-        w_new = max(1, w // 4)
-        h_new = max(1, h // 4)
+    # SceneManager.DEFAULT_MIN_WIDTH = 256
+    TARGET_MIN_WIDTH = 256
+    if w0 < TARGET_MIN_WIDTH:
+        downscale = 1.0
+    else:
+        downscale = w0 / float(TARGET_MIN_WIDTH)
 
-        vr = VideoReader(str(video_path), ctx=ctx, width=w_new, height=h_new)
+    w_eff = int(w0 / downscale)
+    h_eff = int(h0 / downscale)
+    w_eff = max(1, w_eff)
+    h_eff = max(1, h_eff)
+
+    # 2) Open reader at effective size. Prefer GPU context like SceneDetect's downscale.
+    ctx = gpu(0) if torch.cuda.is_available() else cpu(0)
+    try:
+        vr = VideoReader(str(video_path), ctx=ctx, width=w_eff, height=h_eff)
     except Exception as e:
-        logging.warning(f"Failed to load video on GPU: {e}. Falling back to CPU/Standard load.")
-        # Ensure fallback also uses resizing to avoid processing full 4K frames on CPU
-        try:
-            vr = VideoReader(str(video_path), ctx=cpu(0), width=w_new, height=h_new)
-        except NameError:
-             # If w_new/h_new calculation failed above
-             vr = VideoReader(str(video_path), ctx=cpu(0))
-        ctx = cpu(0)
+        logging.warning(f"VideoReader GPU open failed: {e}. Falling back to CPU.")
+        vr = VideoReader(str(video_path), ctx=cpu(0), width=w_eff, height=h_eff)
 
-    duration = len(vr) / vr.get_avg_fps()
-    fps = vr.get_avg_fps()
     frame_count = len(vr)
+    if frame_count == 0 or fps <= 0.0:
+        return []
 
-    # Process in batches to avoid OOM
+    # 3) FlashFilter (MERGE) identical logic to scenedetect.scene_detector.FlashFilter
+    class _FlashFilterMerge:
+        def __init__(self, length: int):
+            self._filter_length = int(length)
+            self._last_above: Optional[int] = None
+            self._merge_enabled: bool = False
+            self._merge_triggered: bool = False
+            self._merge_start: Optional[int] = None
+
+        @property
+        def max_behind(self) -> int:
+            return self._filter_length
+
+        def filter(self, frame_num: int, above_threshold: bool) -> List[int]:
+            if not (self._filter_length > 0):
+                return [frame_num] if above_threshold else []
+            if self._last_above is None:
+                self._last_above = frame_num
+            # MERGE path
+            return self._filter_merge(frame_num, above_threshold)
+
+        def _filter_merge(self, frame_num: int, above_threshold: bool) -> List[int]:
+            min_length_met = (frame_num - self._last_above) >= self._filter_length
+            if above_threshold:
+                self._last_above = frame_num
+            if self._merge_triggered:
+                num_merged_frames = self._last_above - self._merge_start
+                if min_length_met and (not above_threshold) and (num_merged_frames >= self._filter_length):
+                    self._merge_triggered = False
+                    return [self._last_above]
+                return []
+            if not above_threshold:
+                return []
+            if min_length_met:
+                self._merge_enabled = True
+                return [frame_num]
+            if self._merge_enabled:
+                self._merge_triggered = True
+                self._merge_start = frame_num
+            return []
+
+    min_scene_len = 15  # ContentDetector default
+    flash_filter = _FlashFilterMerge(length=min_scene_len)
+
+    # 4) Iterate frames, compute HSV components & frame score like ContentDetector
+    #    Score normalization: divide by sum(abs(weights)) = 3.
     batch_size = 16
-    scene_cuts = [0.0]
-
-    # Progress bar
     total_batches = (frame_count + batch_size - 1) // batch_size
     pbar = tqdm(total=total_batches, desc=f"Detect scenes GPU: {video_path.name}", unit="batch")
 
-    prev_frame_tensor = None
+    last_hsv: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
+    cut_indices: List[int] = []
 
-    # Ideally, we should use a scene detection library but we are rewriting for GPU.
-    # Simple algorithm: L1 distance between consecutive frames.
-
-    # Normalize threshold: standard scenedetect uses 0-255 average diff.
-    # We will compute mean absolute difference per pixel.
-
-    cut_indices = [0]
-
-    # To speed up, we can skip frames if FPS is high, but we might miss cuts.
-    # Let's try to batch read.
+    # Helper: ensure ndarray uint8 contiguous for cv2
+    def _to_bgr_uint8_cpu(frames_tensor: torch.Tensor) -> List[np.ndarray]:
+        # decord produces RGB order; convert to BGR for OpenCV
+        frames_cpu = frames_tensor.detach().to('cpu').numpy()
+        # frames_cpu: (B,H,W,3), uint8
+        # Convert RGB -> BGR by reversing last axis
+        frames_bgr = frames_cpu[..., ::-1]
+        # Ensure contiguous arrays per frame for cv2
+        return [np.ascontiguousarray(frames_bgr[i]) for i in range(frames_bgr.shape[0])]
 
     for i in range(0, frame_count, batch_size):
-        # Read batch
         end_idx = min(i + batch_size, frame_count)
+        frames_t = vr.get_batch(range(i, end_idx))  # torch Tensor (on GPU if ctx=gpu)
+        # Convert to CPU BGR uint8 numpy arrays
+        frames_bgr_list = _to_bgr_uint8_cpu(frames_t)
 
-        # Optimized: Reading batch is faster
-        frames = vr.get_batch(range(i, end_idx))
+        # Process each frame sequentially to exactly match CPU semantics
+        for j, bgr in enumerate(frames_bgr_list):
+            frame_num = i + j
+            # OpenCV HSV conversion (exact semantics/hue range)
+            hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+            hue, sat, val = cv2.split(hsv)
 
-        # Convert to float
-        frames_small = frames.float()
+            if last_hsv is None:
+                last_hsv = (hue, sat, val)
+                # First score is 0.0 by design
+                above = False
+                # Prime flash filter state
+                flash_filter.filter(frame_num, above_threshold=above)
+                continue
 
-        # Convert to grayscale: 0.299*R + 0.587*G + 0.114*B
-        # shape: (B, H, W, 3)
-        gray = (frames_small[..., 0] * 0.299 +
-                frames_small[..., 1] * 0.587 +
-                frames_small[..., 2] * 0.114)
+            hue_prev, sat_prev, val_prev = last_hsv
+            # Mean pixel distance per channel (match _mean_pixel_distance)
+            # cast to int32 to avoid uint8 underflow
+            dh = np.abs(hue.astype(np.int32) - hue_prev.astype(np.int32)).sum() / float(hue.size)
+            ds = np.abs(sat.astype(np.int32) - sat_prev.astype(np.int32)).sum() / float(sat.size)
+            dv = np.abs(val.astype(np.int32) - val_prev.astype(np.int32)).sum() / float(val.size)
+            frame_score = (dh + ds + dv) / 3.0
 
-        # gray shape: (B, H, W)
+            # Record and advance last_hsv
+            last_hsv = (hue, sat, val)
 
-        if prev_frame_tensor is not None:
-            # Concatenate prev frame for diff
-            curr_batch = gray
-            prev_batch = torch.cat([prev_frame_tensor.unsqueeze(0), gray[:-1]])
-        else:
-            curr_batch = gray[1:]
-            prev_batch = gray[:-1]
+            # Compare against threshold exactly like ContentDetector
+            above = frame_score >= threshold
+            emitted = flash_filter.filter(frame_num=frame_num, above_threshold=above)
+            if emitted:
+                cut_indices.extend(emitted)
 
-        diff = torch.abs(curr_batch - prev_batch)
-        # Mean over H, W
-        score = diff.mean(dim=(1, 2))
-
-        # Find cuts
-        # score is a 1D tensor of differences
-
-        # Identify peaks
-        cuts = (score > threshold).nonzero(as_tuple=True)[0]
-
-        # Map back to global frame index
-        # If prev_frame_tensor was not None, index 0 in score corresponds to frame i
-        # If it was None, index 0 corresponds to frame i+1 vs i.
-
-        offset = i if prev_frame_tensor is not None else i + 1
-
-        for cut_idx in cuts:
-            global_frame = offset + cut_idx.item()
-            cut_indices.append(global_frame)
-
-        prev_frame_tensor = gray[-1]
-
-        # Free memory
-        del frames, frames_small, gray, curr_batch, prev_batch, diff, score
+        # release batch tensors ASAP
+        del frames_t, frames_bgr_list
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        pbar.update(1)
 
-        # Progress update
-        if pbar:
-            pbar.update(1)
+    pbar.close()
 
-    # Finish progress bar
-    if pbar:
-        pbar.close()
+    # Build scenes like get_scenes_from_cuts, but align to detect_video_scenes default (start_in_scene=False)
+    if not cut_indices:
+        return []
 
-    cut_indices.append(frame_count)
-    cut_indices = sorted(list(set(cut_indices)))
-
-    scenes = []
-    for k in range(len(cut_indices) - 1):
-        start_frame = cut_indices[k]
-        end_frame = cut_indices[k+1]
-
-        # Filter extremely short scenes (e.g. < 0.5s) to avoid jitter
-        if (end_frame - start_frame) / fps < 0.5:
-            continue
-
-        start_time = start_frame / fps
-        end_time = end_frame / fps
+    cut_indices = sorted(set(cut_indices))
+    scenes: List[Tuple[_SecondsTime, _SecondsTime]] = []
+    last_cut = 0
+    for cut in cut_indices:
+        start_time = last_cut / fps
+        end_time = cut / fps
         scenes.append((_SecondsTime(start_time), _SecondsTime(end_time)))
+        last_cut = cut
+    # Last scene from last cut to end_pos (= frame_count, exclusive)
+    scenes.append((_SecondsTime(last_cut / fps), _SecondsTime(frame_count / fps)))
 
     return scenes
 
