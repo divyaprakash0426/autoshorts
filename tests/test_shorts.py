@@ -35,8 +35,8 @@ sys.modules["decord"] = decord_mock
 
 # Mock cupy
 cupy_mock = MagicMock()
-cupy_mock.asarray = lambda x: x
-cupy_mock.asnumpy = lambda x: x
+cupy_mock.asarray = MagicMock(side_effect=lambda x: x)
+cupy_mock.asnumpy = MagicMock(side_effect=lambda x: x)
 sys.modules["cupy"] = cupy_mock
 
 # Mock cupyx
