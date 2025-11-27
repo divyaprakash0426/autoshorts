@@ -26,6 +26,7 @@ import torch
 import torchaudio
 import decord
 from decord import VideoReader, cpu, gpu
+from tqdm import tqdm
 
 # Load environment variables from a .env file if present.
 load_dotenv()
@@ -136,6 +137,10 @@ def detect_video_scenes_gpu(video_path: Path, threshold: float = 27.0) -> List[T
     batch_size = 64
     scene_cuts = [0.0]
 
+    # Progress bar
+    total_batches = (frame_count + batch_size - 1) // batch_size
+    pbar = tqdm(total=total_batches, desc=f"Detect scenes GPU: {video_path.name}", unit="batch")
+
     # Downsample for faster processing (width=64, height=auto)
     # We can't easily resize inside decord, so we'll just read and downsample via slicing if possible
     # or just read small batches and downsample in torch.
@@ -212,6 +217,14 @@ def detect_video_scenes_gpu(video_path: Path, threshold: float = 27.0) -> List[T
         del frames, frames_small, gray, curr_batch, prev_batch, diff, score
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+        # Progress update
+        if pbar:
+            pbar.update(1)
+
+    # Finish progress bar
+    if pbar:
+        pbar.close()
 
     cut_indices.append(frame_count)
     cut_indices = sorted(list(set(cut_indices)))
