@@ -13,6 +13,7 @@ import logging
 import math
 import random
 import os
+import gc
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Sequence, Tuple, Optional
@@ -123,10 +124,24 @@ def detect_video_scenes_gpu(video_path: Path, threshold: float = 27.0) -> List[T
     ctx = gpu(0) if torch.cuda.is_available() else cpu(0)
 
     try:
-        vr = VideoReader(str(video_path), ctx=ctx)
+        # Determine size on CPU first
+        vr_cpu = VideoReader(str(video_path), ctx=cpu(0))
+        h, w, _ = vr_cpu[0].shape
+        del vr_cpu
+
+        # Resize factor 4
+        w_new = max(1, w // 4)
+        h_new = max(1, h // 4)
+
+        vr = VideoReader(str(video_path), ctx=ctx, width=w_new, height=h_new)
     except Exception as e:
-        logging.warning(f"Failed to load video on GPU: {e}. Falling back to CPU.")
-        vr = VideoReader(str(video_path), ctx=cpu(0))
+        logging.warning(f"Failed to load video on GPU: {e}. Falling back to CPU/Standard load.")
+        # Ensure fallback also uses resizing to avoid processing full 4K frames on CPU
+        try:
+            vr = VideoReader(str(video_path), ctx=cpu(0), width=w_new, height=h_new)
+        except NameError:
+             # If w_new/h_new calculation failed above
+             vr = VideoReader(str(video_path), ctx=cpu(0))
         ctx = cpu(0)
 
     duration = len(vr) / vr.get_avg_fps()
@@ -134,22 +149,14 @@ def detect_video_scenes_gpu(video_path: Path, threshold: float = 27.0) -> List[T
     frame_count = len(vr)
 
     # Process in batches to avoid OOM
-    batch_size = 64
+    batch_size = 16
     scene_cuts = [0.0]
 
     # Progress bar
     total_batches = (frame_count + batch_size - 1) // batch_size
     pbar = tqdm(total=total_batches, desc=f"Detect scenes GPU: {video_path.name}", unit="batch")
 
-    # Downsample for faster processing (width=64, height=auto)
-    # We can't easily resize inside decord, so we'll just read and downsample via slicing if possible
-    # or just read small batches and downsample in torch.
-
     prev_frame_tensor = None
-
-    # We will iterate through frames with a stride to speed up
-    # However, scene detection requires consecutive frames.
-    # Let's read every frame but operate on low res.
 
     # Ideally, we should use a scene detection library but we are rewriting for GPU.
     # Simple algorithm: L1 distance between consecutive frames.
@@ -165,15 +172,12 @@ def detect_video_scenes_gpu(video_path: Path, threshold: float = 27.0) -> List[T
     for i in range(0, frame_count, batch_size):
         # Read batch
         end_idx = min(i + batch_size, frame_count)
-        # indices = list(range(i, end_idx))
-        # frames = vr.get_batch(indices) # Returns (B, H, W, C) tensor on device
 
         # Optimized: Reading batch is faster
         frames = vr.get_batch(range(i, end_idx))
 
-        # Convert to float and downscale for speed
-        # Simple downscale: slicing [::4, ::4, :]
-        frames_small = frames[:, ::4, ::4, :].float()
+        # Convert to float
+        frames_small = frames.float()
 
         # Convert to grayscale: 0.299*R + 0.587*G + 0.114*B
         # shape: (B, H, W, 3)
@@ -376,8 +380,19 @@ def compute_video_action_profile(
     ctx = gpu(0) if torch.cuda.is_available() else cpu(0)
 
     try:
-        vr = VideoReader(str(video_path), ctx=ctx)
+        # First, read metadata on CPU to determine size without loading to GPU
+        vr_cpu = VideoReader(str(video_path), ctx=cpu(0))
+        h, w, _ = vr_cpu[0].shape
+        del vr_cpu
+
+        # Calculate new dimensions
+        w_new = max(1, w // downscale_factor)
+        h_new = max(1, h // downscale_factor)
+
+        # Load directly to GPU with resize
+        vr = VideoReader(str(video_path), ctx=ctx, width=w_new, height=h_new)
     except Exception:
+        logging.warning("Failed to load video for action profile.", exc_info=True)
         return np.array([]), np.array([])
 
     duration = len(vr) / vr.get_avg_fps()
@@ -396,16 +411,16 @@ def compute_video_action_profile(
     motions = []
     times = []
 
-    # Process in batches
-    batch_size = 32
+    # Process in batches - reduced size to save memory
+    batch_size = 2
     prev_batch_last = None
 
     for i in range(0, len(indices), batch_size):
         batch_indices = indices[i : i + batch_size]
-        frames = vr.get_batch(batch_indices) # (B, H, W, C)
+        frames = vr.get_batch(batch_indices) # (B, H_new, W_new, C)
 
-        # Downsample spatially
-        frames_small = frames[:, ::downscale_factor, ::downscale_factor, :].float()
+        # Frames are already resized. Convert to float.
+        frames_small = frames.float()
 
         # Grayscale
         gray = (frames_small[..., 0] * 0.299 +
@@ -850,8 +865,18 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
     logging.info("Detecting scenes (GPU)...")
     scene_list = detect_video_scenes_gpu(video_file)
 
+    # Explicitly clear memory
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     logging.info("Computing audio action profile (GPU)...")
     audio_times, audio_score = compute_audio_action_profile(video_file)
+
+    # Explicitly clear memory
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     logging.info("Computing video action profile (GPU)...")
     video_times, video_score = compute_video_action_profile(
@@ -859,6 +884,11 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
         fps=4,
         downscale_factor=6,
     )
+
+    # Explicitly clear memory
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     processed_scene_list = combine_scenes(scene_list, config)
     processed_scene_list = split_overlong_scenes(processed_scene_list, config)
