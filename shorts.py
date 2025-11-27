@@ -308,22 +308,49 @@ def compute_audio_action_profile(
         # Pad if too short
         y = torch.nn.functional.pad(y, (0, frame_length - y.shape[0]))
 
-    # RMS calculation
+    # RMS calculation with progress bar
     # Unfold creates slices: (n_frames, frame_length)
     windows = y.unfold(0, frame_length, hop_length)
-    rms = torch.sqrt(torch.mean(windows**2, dim=1))
+    n_frames = windows.shape[0]
+
+    rms_chunks = []
+    batch_size = 4096 if n_frames > 4096 else max(1, n_frames)
+    total_batches = (n_frames + batch_size - 1) // batch_size
+    pbar_rms = tqdm(total=total_batches, desc=f"Audio RMS: {video_path.name}", unit="batch")
+    for i in range(0, n_frames, batch_size):
+        chunk = windows[i : i + batch_size]
+        rms_chunk = torch.sqrt(torch.mean(chunk**2, dim=1))
+        rms_chunks.append(rms_chunk)
+        pbar_rms.update(1)
+    pbar_rms.close()
+    rms = torch.cat(rms_chunks) if len(rms_chunks) > 0 else torch.tensor([], device=device)
 
     # Spectral Flux
     # STFT on GPU
     window = torch.hann_window(2048).to(device)
     stft = torch.stft(y, n_fft=2048, hop_length=hop_length, window=window, return_complex=True)
-    magnitude = torch.abs(stft) # shape: (freq_bins, n_frames)
+    magnitude = torch.abs(stft)  # shape: (freq_bins, n_frames)
 
-    # Diff along time axis (dim 1)
-    diff = magnitude[:, 1:] - magnitude[:, :-1]
-    spectral_flux = torch.sqrt(torch.sum(diff**2, dim=0))
-    # Pad to match RMS length
-    spectral_flux = torch.cat([torch.tensor([0.0], device=device), spectral_flux])
+    # Diff along time axis (dim 1) with progress bar
+    t_frames = magnitude.shape[1]
+    if t_frames <= 0:
+        spectral_flux = torch.tensor([], device=device)
+    else:
+        # We'll compute differences in chunks along time axis (excluding the first frame)
+        spectral_parts = [torch.tensor([0.0], device=device)]  # pad first value
+        time_batch = 4096 if t_frames > 4096 else max(1, t_frames)
+        total_time_batches = ((t_frames - 1) + time_batch - 1) // time_batch if t_frames > 1 else 0
+        pbar_flux = tqdm(total=total_time_batches, desc=f"Audio spectral flux: {video_path.name}", unit="batch")
+        for s in range(1, t_frames, time_batch):
+            L = min(time_batch, t_frames - s)
+            curr = magnitude[:, s : s + L]
+            prev = magnitude[:, s - 1 : s + L - 1]
+            diff = curr - prev
+            flux_chunk = torch.sqrt(torch.sum(diff**2, dim=0))
+            spectral_parts.append(flux_chunk)
+            pbar_flux.update(1)
+        pbar_flux.close()
+        spectral_flux = torch.cat(spectral_parts, dim=0)
 
     # Match lengths: STFT and unfold might have slight size mismatch due to padding
     min_len = min(rms.shape[0], spectral_flux.shape[0])
@@ -331,16 +358,18 @@ def compute_audio_action_profile(
     spectral_flux = spectral_flux[:min_len]
 
     # Normalization
-    rms_mean = rms.mean()
-    rms_std = rms.std() + 1e-8
-    rms_norm = (rms - rms_mean) / rms_std
+    rms_mean = rms.mean() if rms.numel() > 0 else torch.tensor(0.0, device=device)
+    rms_std = (rms.std() + 1e-8) if rms.numel() > 0 else torch.tensor(1.0, device=device)
+    rms_norm = (rms - rms_mean) / rms_std if rms.numel() > 0 else rms
 
-    flux_mean = spectral_flux.mean()
-    flux_std = spectral_flux.std() + 1e-8
-    flux_norm = (spectral_flux - flux_mean) / flux_std
+    flux_mean = spectral_flux.mean() if spectral_flux.numel() > 0 else torch.tensor(0.0, device=device)
+    flux_std = (spectral_flux.std() + 1e-8) if spectral_flux.numel() > 0 else torch.tensor(1.0, device=device)
+    flux_norm = (spectral_flux - flux_mean) / flux_std if spectral_flux.numel() > 0 else spectral_flux
 
     # Smoothing (convolution)
     def smooth_gpu(x: torch.Tensor, win: int = 21) -> torch.Tensor:
+        if x.numel() == 0:
+            return x
         if win > x.shape[0]:
             win = x.shape[0]
         if win % 2 == 0:
@@ -357,11 +386,13 @@ def compute_audio_action_profile(
     rms_smooth = smooth_gpu(rms_norm, win=21)
     flux_smooth = smooth_gpu(flux_norm, win=21)
 
-    score = 0.6 * rms_smooth + 0.4 * flux_smooth
+    score = 0.6 * rms_smooth + 0.4 * flux_smooth if rms_smooth.numel() > 0 and flux_smooth.numel() > 0 else (
+        rms_smooth if flux_smooth.numel() == 0 else flux_smooth
+    )
 
     # Convert times to CPU numpy
     num_frames = score.shape[0]
-    times = torch.arange(num_frames, device=device) * hop_length / sample_rate
+    times = torch.arange(num_frames, device=device) * hop_length / sample_rate if num_frames > 0 else torch.tensor([], device=device)
 
     return times.cpu().numpy(), score.cpu().numpy()
 
@@ -415,6 +446,9 @@ def compute_video_action_profile(
     batch_size = 2
     prev_batch_last = None
 
+    total_batches = (len(indices) + batch_size - 1) // batch_size
+    pbar = tqdm(total=total_batches, desc=f"Video action GPU: {video_path.name}", unit="batch")
+
     for i in range(0, len(indices), batch_size):
         batch_indices = indices[i : i + batch_size]
         frames = vr.get_batch(batch_indices) # (B, H_new, W_new, C)
@@ -449,6 +483,10 @@ def compute_video_action_profile(
         del frames, frames_small, gray, diffs
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+        pbar.update(1)
+
+    pbar.close()
 
     motions = torch.cat(motions)
     times = torch.cat(times)
