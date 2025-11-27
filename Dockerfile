@@ -2,39 +2,48 @@ FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-devel
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Устанавливаем инструменты
+# 1. Install system tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
     libgl1-mesa-glx \
     libglib2.0-0 \
     git \
     build-essential \
     cmake \
     pkg-config \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 2. Устанавливаем заголовки
+# 2. FIX: Install FFmpeg 4.4.2
+# This is the latest version with which Decord reliably compiles without errors
+RUN conda update -n base -c defaults conda -y && \
+    conda install -y -c conda-forge "ffmpeg=4.4.2"
+
+# 3. Set up environment
+ENV FFMPEG_BINARY=/opt/conda/bin/ffmpeg
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+# 4. Install codec headers
+# Important: for the older ffmpeg it's better to use a pinned header version, but git master should also work
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && \
     make install && \
     cd .. && rm -rf nv-codec-headers
 
-# 3. ИСПРАВЛЕНИЕ: Копируем драйвер в системную папку
-# Файл libnvcuvid.so (который вы скопировали из WSL) мы кладем как .so.1
-# чтобы программа нашла его при запуске.
-COPY libnvcuvid.so /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1
+# 5. Copy actual drivers
+COPY libnvcuvid.so /usr/lib/x86_64-linux-gnu/libnvcuvid.so
+COPY libnvidia-encode.so /usr/lib/x86_64-linux-gnu/libnvidia-encode.so
 
-# Создаем ссылку .so для компилятора
-RUN ln -s /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so
+# Create symlinks
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libnvcuvid.so /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libnvidia-encode.so /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1
 
-# 4. Зависимости Python
+# 6. Install Python dependencies
 COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Собираем Decord
-# Обратите внимание: путь к библиотеке изменился на системный
+# 7. Build Decord
 RUN git clone --recursive https://github.com/dmlc/decord && \
     cd decord && \
     mkdir build && cd build && \
@@ -45,7 +54,7 @@ RUN git clone --recursive https://github.com/dmlc/decord && \
     python setup.py install && \
     cd /app && rm -rf decord
 
-# 6. Фикс libstdc++
+# 8. C++ library fix
 RUN rm /opt/conda/lib/libstdc++.so.6 && \
     ln -s /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/conda/lib/libstdc++.so.6
 
