@@ -328,7 +328,7 @@ def blur_gpu(image_tensor: torch.Tensor, sigma: float = 8.0) -> torch.Tensor:
     blurred = blurred.astype(cupy_array.dtype)
 
     # Convert back to torch
-    return torch.from_dlpack(cp.to_dlpack(blurred))
+    return torch.from_dlpack(blurred.toDlpack())
 
 
 # --- Audio-based action scoring (GPU) -------------------------------------------
@@ -1038,7 +1038,7 @@ def render_video_gpu(
             # Apply blur
             blurred_bg_cp = cupyx.scipy.ndimage.gaussian_filter(f_bg, sigma=(0, 16, 16, 0))
             blurred_bg_cp = blurred_bg_cp.astype(cp_bg.dtype)
-            blurred_bg = torch.from_dlpack(cp.to_dlpack(blurred_bg_cp))
+            blurred_bg = torch.from_dlpack(blurred_bg_cp.toDlpack())
 
             # Resize BG to final Output Size
             blurred_bg = blurred_bg.permute(0, 3, 1, 2).float() # (B, 3, H, W)
