@@ -440,7 +440,18 @@ def compute_video_action_profile(
 
     Uses Decord to read frames directly to GPU memory and computes
     mean absolute pixel difference.
+
+    Robust to DECORD EOF issues: wraps get_batch with retries/chunking and
+    allows configuring DECORD_EOF_RETRY_MAX via environment.
     """
+
+    # Ensure a sufficiently high EOF retry limit before creating any VideoReader.
+    try:
+        max_retry = _get_env_int('DECORD_EOF_RETRY_MAX', 65536)
+        os.environ['DECORD_EOF_RETRY_MAX'] = str(max_retry)
+    except Exception:
+        pass
+    skip_tail = _get_env_int('DECORD_SKIP_TAIL_FRAMES', 0)
 
     ctx = gpu(0) if torch.cuda.is_available() else cpu(0)
 
@@ -448,6 +459,7 @@ def compute_video_action_profile(
         # First, read metadata on CPU to determine size without loading to GPU
         vr_cpu = VideoReader(str(video_path), ctx=cpu(0))
         h, w, _ = vr_cpu[0].shape
+        orig_fps_probe = float(vr_cpu.get_avg_fps())
         del vr_cpu
 
         # Calculate new dimensions
@@ -461,14 +473,17 @@ def compute_video_action_profile(
         return np.array([]), np.array([])
 
     duration = len(vr) / vr.get_avg_fps()
-    orig_fps = vr.get_avg_fps()
+    orig_fps = float(vr.get_avg_fps()) if hasattr(vr, 'get_avg_fps') else orig_fps_probe
     eff_fps = min(float(fps), float(orig_fps))
     if eff_fps <= 0:
         eff_fps = max(1.0, float(fps))
 
     # Calculate indices to sample
     step = max(1, int(orig_fps / eff_fps))
-    indices = list(range(0, len(vr), step))
+    end_index_exclusive = len(vr) - max(0, int(skip_tail))
+    if end_index_exclusive < 0:
+        end_index_exclusive = 0
+    indices = list(range(0, end_index_exclusive, step))
 
     if not indices:
         return np.array([]), np.array([])
@@ -476,7 +491,69 @@ def compute_video_action_profile(
     motions = []
     times = []
 
-    # Process in batches - reduced size to save memory
+    # Helper: safe batched get with retries & chunking
+    try:
+        from decord._ffi.base import DECORDError as _DecordError
+    except Exception:
+        _DecordError = Exception  # Fallback
+
+    def safe_get_batch(reader: VideoReader, idxs: List[int]) -> Tuple[Optional[torch.Tensor], List[int]]:
+        if not idxs:
+            return None, []
+        try:
+            frames = reader.get_batch(idxs)
+            return frames, idxs
+        except _DecordError as e:
+            # Split and try smaller chunks
+            if len(idxs) == 1:
+                # Drop this problematic index
+                logging.warning(
+                    "Decord EOF retry exceeded for last indices; skipping tail frame index %s. Hint: increase DECORD_EOF_RETRY_MAX or set DECORD_SKIP_TAIL_FRAMES.",
+                    idxs[0],
+                )
+                return None, []
+            mid = len(idxs) // 2
+            left_frames, left_kept = safe_get_batch(reader, idxs[:mid])
+            right_frames, right_kept = safe_get_batch(reader, idxs[mid:])
+            kept = left_kept + right_kept
+            if not kept:
+                return None, []
+            if left_frames is None:
+                return right_frames, right_kept
+            if right_frames is None:
+                return left_frames, left_kept
+            try:
+                return torch.cat([left_frames, right_frames], dim=0), kept
+            except Exception:
+                # As a last resort, fetch one-by-one preserving order
+                tensors = []
+                kept_final = []
+                for ii in idxs:
+                    try:
+                        t = reader.get_batch([ii])
+                        tensors.append(t)
+                        kept_final.append(ii)
+                    except Exception:
+                        logging.warning("Skipping unreadable frame index %s at EOF.", ii)
+                if not tensors:
+                    return None, []
+                return torch.cat(tensors, dim=0), kept_final
+        except Exception:
+            # Unknown error type; try to continue with singles
+            tensors = []
+            kept_final = []
+            for ii in idxs:
+                try:
+                    t = reader.get_batch([ii])
+                    tensors.append(t)
+                    kept_final.append(ii)
+                except Exception:
+                    logging.warning("Skipping unreadable frame index %s due to unknown error.", ii)
+            if not tensors:
+                return None, []
+            return torch.cat(tensors, dim=0), kept_final
+
+    # Process in batches - small size to save memory
     batch_size = 2
     prev_batch_last = None
 
@@ -485,7 +562,10 @@ def compute_video_action_profile(
 
     for i in range(0, len(indices), batch_size):
         batch_indices = indices[i : i + batch_size]
-        frames = vr.get_batch(batch_indices) # (B, H_new, W_new, C)
+        frames, kept_idx = safe_get_batch(vr, batch_indices)
+        if frames is None or len(kept_idx) == 0:
+            pbar.update(1)
+            continue
 
         # Frames are already resized. Convert to float.
         frames_small = frames.float()
@@ -497,19 +577,19 @@ def compute_video_action_profile(
 
         # Diff
         if prev_batch_last is not None:
-             diffs = torch.abs(gray - torch.cat([prev_batch_last.unsqueeze(0), gray[:-1]]))
+            diffs = torch.abs(gray - torch.cat([prev_batch_last.unsqueeze(0), gray[:-1]]))
         else:
-             # For the very first frame, diff is 0
-             diffs = torch.abs(gray - torch.cat([gray[0:1], gray[:-1]]))
-             diffs[0] = 0.0
+            # For the very first frame, diff is 0
+            diffs = torch.abs(gray - torch.cat([gray[0:1], gray[:-1]]))
+            diffs[0] = 0.0
 
         # Mean diff per frame
         batch_motions = diffs.mean(dim=(1, 2))
 
         motions.append(batch_motions)
 
-        # Timestamps
-        batch_times = torch.tensor(batch_indices, device=gray.device).float() / orig_fps
+        # Timestamps; align to kept indices actually read
+        batch_times = torch.tensor(kept_idx, device=gray.device).float() / orig_fps
         times.append(batch_times)
 
         prev_batch_last = gray[-1]
@@ -522,10 +602,15 @@ def compute_video_action_profile(
 
     pbar.close()
 
+    if len(motions) == 0:
+        return np.array([]), np.array([])
+
     motions = torch.cat(motions)
     times = torch.cat(times)
 
     # Normalize and smooth (similar to audio)
+    if motions.numel() == 0:
+        return np.array([]), np.array([])
     if motions.std() == 0:
         motions_norm = motions
     else:

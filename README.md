@@ -100,6 +100,8 @@ Supported variables (defaults shown):
 - `MIN_SHORT_LENGTH=15` — Minimum short length in seconds.
 - `MAX_SHORT_LENGTH=179` — Maximum short length in seconds.
 - `MAX_COMBINED_SCENE_LENGTH=300` — Maximum combined length (in seconds).
+- `DECORD_EOF_RETRY_MAX=65536` — Decord EOF retry attempts; increase for very long 4K files where the last frames are slow to retrieve.
+- `DECORD_SKIP_TAIL_FRAMES=0` — Optionally skip the last N frames when sampling video action profile to avoid problematic EOF reads (leave 0 unless you consistently hit EOF on specific files).
 
 ## Running Tests
 

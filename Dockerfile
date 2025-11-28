@@ -23,6 +23,9 @@ RUN conda update -n base -c defaults conda -y && \
 # 3. Set up environment
 ENV FFMPEG_BINARY=/opt/conda/bin/ffmpeg
 ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+# Increase Decord EOF retry limit to better handle long 4K videos with slow tail retrieval
+ENV DECORD_EOF_RETRY_MAX=65536
+ENV DECORD_SKIP_TAIL_FRAMES=0
 
 # 4. Install codec headers
 # Important: for the older ffmpeg it's better to use a pinned header version, but git master should also work
