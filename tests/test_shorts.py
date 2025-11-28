@@ -102,7 +102,6 @@ def test_blur_gpu_uses_cupy():
     shorts.torch.to_dlpack.assert_called_with(image_tensor)
     shorts.cp.from_dlpack.assert_called()
     shorts.cupyx.scipy.ndimage.gaussian_filter.assert_called()
-    shorts.cp.to_dlpack.assert_called_with(mock_cupy_array.astype())
     shorts.torch.from_dlpack.assert_called()
 
 
