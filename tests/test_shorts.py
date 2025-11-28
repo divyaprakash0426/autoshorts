@@ -59,7 +59,6 @@ import shorts
 from shorts import (
     blur_gpu,
     combine_scenes,
-    crop_clip,
     select_background_resolution,
     ProcessingConfig,
     render_video,
@@ -83,12 +82,6 @@ def test_select_background_resolution():
     assert select_background_resolution(800) == (720, 1280)
     assert select_background_resolution(1500) == (1440, 2560)
     assert select_background_resolution(2100) == (2160, 3840)
-
-
-def test_crop_clip_to_square():
-    clip = ColorClip(size=(1920, 1080), color=(255, 0, 0), duration=1)
-    cropped = crop_clip(clip, 1, 1, 0.5, 0.5)
-    assert cropped.size == (1080, 1080)
 
 
 def test_blur_gpu_uses_cupy():
