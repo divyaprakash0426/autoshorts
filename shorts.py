@@ -14,6 +14,7 @@ import math
 import random
 import os
 import gc
+import multiprocessing
 try:
     import resource
 except ImportError:
@@ -1224,6 +1225,25 @@ def render_video_gpu(
             pass
 
 
+def render_video_gpu_isolated(*args, **kwargs) -> None:
+    """Runs render_video_gpu in a separate process to ensure memory cleanup."""
+    # Use 'spawn' to ensure a fresh process space
+    ctx = multiprocessing.get_context('spawn')
+    p = ctx.Process(
+        target=render_video_gpu,
+        args=args,
+        kwargs=kwargs
+    )
+    p.start()
+    p.join()
+
+    if p.exitcode != 0:
+        logging.error("Render process failed with exit code %s", p.exitcode)
+        # If exit code is 137 (128+9) or -9, it was likely OOM killed.
+        if p.exitcode == -9 or p.exitcode == 137:
+             logging.error("Render process was likely OOM killed.")
+
+
 def combine_scenes(scene_list: Sequence[Tuple], config: ProcessingConfig) -> List[List]:
     """Combine adjacent scenes while preserving content."""
 
@@ -1449,7 +1469,7 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
             )
 
             # Execute GPU render
-            render_video_gpu(
+            render_video_gpu_isolated(
                 params,
                 render_path,
                 max_error_depth=config.max_error_depth,
@@ -1477,7 +1497,7 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
             config
         )
 
-        render_video_gpu(
+        render_video_gpu_isolated(
             params,
             output_dir / video_file.name,
             max_error_depth=config.max_error_depth,
