@@ -1042,8 +1042,20 @@ def render_video_gpu(
         # Initial memory log
         log_memory_usage("Render Start")
 
+        # Periodically refresh VideoReader to prevent internal memory leaks in decord
+        VR_REFRESH_INTERVAL = 200
+
         with tqdm(total=total_batches, desc="Video render", unit="batch") as pbar_render:
             for i in range(0, len(frame_indices), BATCH_SIZE):
+                # Refresh VideoReader periodically
+                if i > 0 and (i // BATCH_SIZE) % VR_REFRESH_INTERVAL == 0:
+                    del vr
+                    # Force GC to clean up old reader
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    vr = VideoReader(str(params.source_path), ctx=ctx)
+
                 # Check if ffmpeg is still alive
                 if process.poll() is not None:
                     logging.error("FFMPEG process died unexpectedly with return code %s", process.returncode)
@@ -1127,9 +1139,11 @@ def render_video_gpu(
                     final_bg[:, :, y1:y2, x1:x2] = final_fg[:, :, sy1:sy2, sx1:sx2]
 
                 # 4. Write to Pipe
-                out_frames = final_bg.permute(0, 2, 3, 1).byte().cpu().numpy()
+                # Ensure contiguous memory for direct write
+                out_frames = final_bg.permute(0, 2, 3, 1).contiguous().byte().cpu().numpy()
                 try:
-                    process.stdin.write(out_frames.tobytes())
+                    # Write buffer directly to avoid creating a large bytes copy
+                    process.stdin.write(out_frames.data)
                 except (BrokenPipeError, OSError) as e:
                     logging.error(f"Failed to write to FFMPEG stdin: {e}")
                     break
@@ -1137,7 +1151,8 @@ def render_video_gpu(
                 del frames, bg_frames, bg_small, blurred_bg, final_bg, fg_frames, final_fg, out_frames
 
                 # Periodic aggressive GC to prevent fragmentation/creep
-                if i > 0 and (i // BATCH_SIZE) % 20 == 0:
+                # Adjusted interval to every 50 batches (previously 20) to balance performance and memory safety.
+                if i > 0 and (i // BATCH_SIZE) % 50 == 0:
                      gc.collect()
                      if torch.cuda.is_available():
                          torch.cuda.empty_cache()
