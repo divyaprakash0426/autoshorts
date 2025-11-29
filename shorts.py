@@ -327,8 +327,8 @@ def blur_gpu(image_tensor: torch.Tensor, sigma: float = 8.0) -> torch.Tensor:
     blurred = cupyx.scipy.ndimage.gaussian_filter(f_array, sigma=(sigma, sigma, 0))
     blurred = blurred.astype(cupy_array.dtype)
 
-    # Convert back to torch
-    return torch.from_dlpack(blurred.toDlpack())
+    # Convert back to torch (use DLPack protocol, avoiding deprecated CuPy .toDlpack())
+    return torch.utils.dlpack.from_dlpack(blurred)
 
 
 # --- Audio-based action scoring (GPU) -------------------------------------------
@@ -939,7 +939,7 @@ def render_video_gpu(
         "-i", "-", # Input from pipe
         "-i", str(temp_audio), # Audio input
         "-c:v", "h264_nvenc",
-        "-preset", "p4",
+        "-preset", "p7",
         "-c:a", "aac",
         "-shortest",
         str(output_path)
@@ -1000,84 +1000,88 @@ def render_video_gpu(
 
         # Process in batches
         batch_size = 8
-        for i in range(0, len(frame_indices), batch_size):
-            batch_idxs = frame_indices[i : i + batch_size]
-            batch_idxs = [min(x, len(vr)-1) for x in batch_idxs]
+        total_batches = (len(frame_indices) + batch_size - 1) // batch_size
+        with tqdm(total=total_batches, desc="Video render", unit="batch") as pbar_render:
+            for i in range(0, len(frame_indices), batch_size):
+                batch_idxs = frame_indices[i : i + batch_size]
+                batch_idxs = [min(x, len(vr)-1) for x in batch_idxs]
 
-            try:
-                frames = vr.get_batch(batch_idxs) # (B, H, W, 3)
-            except Exception as e:
-                logging.warning(f"Failed to read batch: {e}")
-                break
+                try:
+                    frames = vr.get_batch(batch_idxs) # (B, H, W, 3)
+                except Exception as e:
+                    logging.warning(f"Failed to read batch: {e}")
+                    break
 
-            # Process batch
-            B, H, W, C = frames.shape
+                # Process batch
+                B, H, W, C = frames.shape
 
-            # 1. Create Background
-            bg_frames = frames[:, bg_crop_y:bg_crop_y+bg_crop_h, bg_crop_x:bg_crop_x+bg_crop_w, :]
+                # 1. Create Background
+                bg_frames = frames[:, bg_crop_y:bg_crop_y+bg_crop_h, bg_crop_x:bg_crop_x+bg_crop_w, :]
 
-            # Resize BG to small for blur
-            bg_frames = bg_frames.permute(0, 3, 1, 2).float() # (B, 3, H, W)
+                # Resize BG to small for blur
+                bg_frames = bg_frames.permute(0, 3, 1, 2).float() # (B, 3, H, W)
 
-            blur_target_w = 720
-            blur_target_h = 1280 if params.is_vertical_bg else 720
+                blur_target_w = 720
+                blur_target_h = 1280 if params.is_vertical_bg else 720
 
-            bg_small = torch.nn.functional.interpolate(
-                bg_frames, size=(blur_target_h, blur_target_w), mode='bilinear', align_corners=False
-            )
+                bg_small = torch.nn.functional.interpolate(
+                    bg_frames, size=(blur_target_h, blur_target_w), mode='bilinear', align_corners=False
+                )
 
-            # Blur
-            bg_small = bg_small.permute(0, 2, 3, 1) # (B, H, W, 3)
-            if not bg_small.is_contiguous():
-                bg_small = bg_small.contiguous()
+                # Blur
+                bg_small = bg_small.permute(0, 2, 3, 1) # (B, H, W, 3)
+                if not bg_small.is_contiguous():
+                    bg_small = bg_small.contiguous()
 
-            # Transfer to CuPy
-            cp_bg = cp.from_dlpack(torch.to_dlpack(bg_small))
-            f_bg = cp_bg.astype(float)
+                # Transfer to CuPy
+                cp_bg = cp.from_dlpack(torch.to_dlpack(bg_small))
+                f_bg = cp_bg.astype(float)
 
-            # Apply blur
-            blurred_bg_cp = cupyx.scipy.ndimage.gaussian_filter(f_bg, sigma=(0, 16, 16, 0))
-            blurred_bg_cp = blurred_bg_cp.astype(cp_bg.dtype)
-            blurred_bg = torch.from_dlpack(blurred_bg_cp.toDlpack())
+                # Apply blur
+                blurred_bg_cp = cupyx.scipy.ndimage.gaussian_filter(f_bg, sigma=(0, 16, 16, 0))
+                blurred_bg_cp = blurred_bg_cp.astype(cp_bg.dtype)
+                # Use DLPack protocol directly to avoid deprecated CuPy .toDlpack()
+                blurred_bg = torch.utils.dlpack.from_dlpack(blurred_bg_cp)
 
-            # Resize BG to final Output Size
-            blurred_bg = blurred_bg.permute(0, 3, 1, 2).float() # (B, 3, H, W)
-            final_bg = torch.nn.functional.interpolate(
-                blurred_bg, size=(params.output_height, params.output_width), mode='bilinear', align_corners=False
-            )
+                # Resize BG to final Output Size
+                blurred_bg = blurred_bg.permute(0, 3, 1, 2).float() # (B, 3, H, W)
+                final_bg = torch.nn.functional.interpolate(
+                    blurred_bg, size=(params.output_height, params.output_width), mode='bilinear', align_corners=False
+                )
 
-            # 2. Create Foreground
-            fg_frames = frames[:, params.crop_y:params.crop_y+params.crop_h, params.crop_x:params.crop_x+params.crop_w, :]
-            fg_frames = fg_frames.permute(0, 3, 1, 2).float()
-            final_fg = torch.nn.functional.interpolate(
-                fg_frames, size=(fg_h, fg_w), mode='bilinear', align_corners=False
-            )
+                # 2. Create Foreground
+                fg_frames = frames[:, params.crop_y:params.crop_y+params.crop_h, params.crop_x:params.crop_x+params.crop_w, :]
+                fg_frames = fg_frames.permute(0, 3, 1, 2).float()
+                final_fg = torch.nn.functional.interpolate(
+                    fg_frames, size=(fg_h, fg_w), mode='bilinear', align_corners=False
+                )
 
-            # 3. Composite
-            y_offset = (params.output_height - fg_h) // 2
-            x_offset = (params.output_width - fg_w) // 2
+                # 3. Composite
+                y_offset = (params.output_height - fg_h) // 2
+                x_offset = (params.output_width - fg_w) // 2
 
-            y1 = max(0, y_offset)
-            y2 = min(params.output_height, y_offset + fg_h)
-            x1 = max(0, x_offset)
-            x2 = min(params.output_width, x_offset + fg_w)
+                y1 = max(0, y_offset)
+                y2 = min(params.output_height, y_offset + fg_h)
+                x1 = max(0, x_offset)
+                x2 = min(params.output_width, x_offset + fg_w)
 
-            sy1 = -y_offset if y_offset < 0 else 0
-            sx1 = -x_offset if x_offset < 0 else 0
+                sy1 = -y_offset if y_offset < 0 else 0
+                sx1 = -x_offset if x_offset < 0 else 0
 
-            h_seg = y2 - y1
-            w_seg = x2 - x1
-            sy2 = sy1 + h_seg
-            sx2 = sx1 + w_seg
+                h_seg = y2 - y1
+                w_seg = x2 - x1
+                sy2 = sy1 + h_seg
+                sx2 = sx1 + w_seg
 
-            if h_seg > 0 and w_seg > 0:
-                final_bg[:, :, y1:y2, x1:x2] = final_fg[:, :, sy1:sy2, sx1:sx2]
+                if h_seg > 0 and w_seg > 0:
+                    final_bg[:, :, y1:y2, x1:x2] = final_fg[:, :, sy1:sy2, sx1:sx2]
 
-            # 4. Write to Pipe
-            out_frames = final_bg.permute(0, 2, 3, 1).byte().cpu().numpy()
-            process.stdin.write(out_frames.tobytes())
+                # 4. Write to Pipe
+                out_frames = final_bg.permute(0, 2, 3, 1).byte().cpu().numpy()
+                process.stdin.write(out_frames.tobytes())
 
-            del frames, bg_frames, bg_small, blurred_bg, final_bg, fg_frames, final_fg, out_frames
+                del frames, bg_frames, bg_small, blurred_bg, final_bg, fg_frames, final_fg, out_frames
+                pbar_render.update(1)
 
     except Exception as e:
         logging.error(f"Error during GPU render: {e}", exc_info=True)
