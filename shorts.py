@@ -964,7 +964,19 @@ def render_video_gpu(
         "-i", str(temp_audio), # Audio input
         "-c:v", "h264_nvenc",
         "-preset", "p7",
+        "-tune", "hq",
+        "-rc", "vbr",
+        "-b:v", "50M",
+        "-maxrate", "100M",
+        "-bufsize", "100M",
+        "-pix_fmt", "yuv420p",
+        "-g", f"{int(fps * 2)}",
+        "-bf", "2",
+        "-temporal_aq", "1",
+        "-spatial_aq", "1",
+        "-rc-lookahead", "32",
         "-c:a", "aac",
+        "-b:a", "192k",
         "-shortest",
         str(output_path)
     ]
