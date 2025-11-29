@@ -14,6 +14,10 @@ import math
 import random
 import os
 import gc
+try:
+    import resource
+except ImportError:
+    resource = None
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +91,26 @@ class ProcessingConfig:
     def middle_short_length(self) -> float:
         """Return the mid point between min and max short lengths."""
         return (self.min_short_length + self.max_short_length) / 2
+
+
+def log_memory_usage(tag: str = ""):
+    """Log current memory usage (RAM and VRAM)."""
+    usage_stats = []
+
+    # RAM
+    if resource:
+        # ru_maxrss is in KB on Linux
+        rusage = resource.getrusage(resource.RUSAGE_SELF)
+        ram_mb = rusage.ru_maxrss / 1024.0
+        usage_stats.append(f"RAM: {ram_mb:.1f} MB")
+
+    # VRAM
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / (1024 ** 2)
+        reserved = torch.cuda.memory_reserved() / (1024 ** 2)
+        usage_stats.append(f"VRAM Alloc: {allocated:.1f} MB, Res: {reserved:.1f} MB")
+
+    logging.info(f"[{tag}] Memory: {', '.join(usage_stats)}")
 
 
 @dataclass
@@ -999,11 +1023,25 @@ def render_video_gpu(
              frame_indices.append(idx)
 
         # Process in batches
-        batch_size = 8
-        total_batches = (len(frame_indices) + batch_size - 1) // batch_size
+        # Reduced batch size to prevent OOM / stability issues with 4K
+        BATCH_SIZE = 4
+        total_batches = (len(frame_indices) + BATCH_SIZE - 1) // BATCH_SIZE
+
+        # Initial memory log
+        log_memory_usage("Render Start")
+
         with tqdm(total=total_batches, desc="Video render", unit="batch") as pbar_render:
-            for i in range(0, len(frame_indices), batch_size):
-                batch_idxs = frame_indices[i : i + batch_size]
+            for i in range(0, len(frame_indices), BATCH_SIZE):
+                # Check if ffmpeg is still alive
+                if process.poll() is not None:
+                    logging.error("FFMPEG process died unexpectedly with return code %s", process.returncode)
+                    # Try to read stderr
+                    stderr_out = process.stderr.read()
+                    if stderr_out:
+                        logging.error("FFMPEG stderr: %s", stderr_out.decode('utf-8', errors='ignore'))
+                    break
+
+                batch_idxs = frame_indices[i : i + BATCH_SIZE]
                 batch_idxs = [min(x, len(vr)-1) for x in batch_idxs]
 
                 try:
@@ -1078,9 +1116,23 @@ def render_video_gpu(
 
                 # 4. Write to Pipe
                 out_frames = final_bg.permute(0, 2, 3, 1).byte().cpu().numpy()
-                process.stdin.write(out_frames.tobytes())
+                try:
+                    process.stdin.write(out_frames.tobytes())
+                except (BrokenPipeError, OSError) as e:
+                    logging.error(f"Failed to write to FFMPEG stdin: {e}")
+                    break
 
                 del frames, bg_frames, bg_small, blurred_bg, final_bg, fg_frames, final_fg, out_frames
+
+                # Periodic aggressive GC to prevent fragmentation/creep
+                if i > 0 and (i // BATCH_SIZE) % 20 == 0:
+                     gc.collect()
+                     if torch.cuda.is_available():
+                         torch.cuda.empty_cache()
+                     # Optional: Log memory every 100 batches
+                     if (i // BATCH_SIZE) % 100 == 0:
+                         log_memory_usage(f"Batch {i}")
+
                 pbar_render.update(1)
 
     except Exception as e:

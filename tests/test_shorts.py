@@ -95,14 +95,14 @@ def test_blur_gpu_uses_cupy():
     shorts.cupyx.scipy.ndimage.gaussian_filter.return_value = mock_cupy_array
 
     # Return mock torch tensor
-    shorts.torch.from_dlpack.return_value = MagicMock()
+    shorts.torch.utils.dlpack.from_dlpack.return_value = MagicMock()
 
     res = blur_gpu(image_tensor)
 
     shorts.torch.to_dlpack.assert_called_with(image_tensor)
     shorts.cp.from_dlpack.assert_called()
     shorts.cupyx.scipy.ndimage.gaussian_filter.assert_called()
-    shorts.torch.from_dlpack.assert_called()
+    shorts.torch.utils.dlpack.from_dlpack.assert_called()
 
 
 def test_combine_scenes_merges_short_scenes():
