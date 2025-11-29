@@ -962,11 +962,11 @@ def render_video_gpu(
         "-r", f"{fps}",
         "-i", "-", # Input from pipe
         "-i", str(temp_audio), # Audio input
-        "-c:v", "h264_nvenc",
+        "-c:v", "hevc_nvenc",
         "-preset", "p7",
         "-tune", "hq",
         "-rc", "vbr",
-        "-b:v", "50M",
+        "-cq", "21",
         "-maxrate", "100M",
         "-bufsize", "100M",
         "-pix_fmt", "yuv420p",
