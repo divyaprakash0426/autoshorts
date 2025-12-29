@@ -363,7 +363,7 @@ def compute_audio_action_profile(
     frame_length: int = 2048,
     hop_length: int = 512,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Compute audio-based "action score" on GPU.
+    """Compute audio-based "action score" on GPU with memory-efficient batching.
 
     Returns:
       times  - array of times (seconds) for each feature frame
@@ -371,73 +371,158 @@ def compute_audio_action_profile(
     """
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Load audio using torchaudio
+    
+    # Load audio using torchaudio (remains on CPU initially)
     # normalize=True loads as float32 in [-1, 1]
-    waveform, sample_rate = torchaudio.load(str(video_path), normalize=True)
-
-    # Move to GPU
-    waveform = waveform.to(device)
-
-    # Mix to mono if necessary
+    # We do NOT move the full waveform to GPU.
+    try:
+        waveform, sample_rate = torchaudio.load(str(video_path), normalize=True)
+    except Exception:
+        logging.error(f"Failed to load audio from {video_path}")
+        return np.array([]), np.array([])
+    
+    # Mix to mono if necessary (remains on CPU)
     if waveform.shape[0] > 1:
         waveform = torch.mean(waveform, dim=0, keepdim=True)
+    
+    # Remove batch dim
+    y_cpu = waveform.squeeze(0)  # Shape: (total_samples,)
 
-    # Remove batch dim for processing
-    y = waveform.squeeze(0)
+    # --- RMS (Loudness) Calculation in Batches ---
+    
+    # Use a sliding window approach with batched chunks to avoid allocating 
+    # the entire unfolded tensor on GPU, which causes OOM on large files.
+    
+    CHUNK_SIZE = 48000 * 60  # ~1 minute chunks
+    total_samples = y_cpu.shape[0]
+    
+    rms_values = []
+    
+    # Pad the signal if it's shorter than one frame 
+    if total_samples < frame_length:
+        y_cpu = torch.nn.functional.pad(y_cpu, (0, frame_length - total_samples))
+        total_samples = y_cpu.shape[0]
 
-    # RMS (Loudness)
-    # We can use unfold to create frames
-    # shape: (n_frames, frame_length)
-    if y.shape[0] < frame_length:
-        # Pad if too short
-        y = torch.nn.functional.pad(y, (0, frame_length - y.shape[0]))
-
-    # RMS calculation with progress bar
-    # Unfold creates slices: (n_frames, frame_length)
-    windows = y.unfold(0, frame_length, hop_length)
-    n_frames = windows.shape[0]
-
-    rms_chunks = []
-    batch_size = 4096 if n_frames > 4096 else max(1, n_frames)
-    total_batches = (n_frames + batch_size - 1) // batch_size
-    pbar_rms = tqdm(total=total_batches, desc=f"Audio RMS", unit="batch")
-    for i in range(0, n_frames, batch_size):
-        chunk = windows[i : i + batch_size]
-        rms_chunk = torch.sqrt(torch.mean(chunk**2, dim=1))
-        rms_chunks.append(rms_chunk)
-        pbar_rms.update(1)
+    # Process in chunks ensuring proper window alignment.
+    # Calculate total expected frames based on total samples and hop length.
+    
+    num_frames_total = (total_samples - frame_length) // hop_length + 1
+    if num_frames_total <= 0:
+        num_frames_total = 0
+        
+    # Iterate over OUTPUT frames
+    FRAMES_PER_BATCH = 4096 * 4  # Process ~16k frames at a time
+    
+    pbar_rms = tqdm(total=num_frames_total, desc="Audio RMS", unit="fr")
+    
+    current_frame = 0
+    while current_frame < num_frames_total:
+        end_frame = min(current_frame + FRAMES_PER_BATCH, num_frames_total)
+        count = end_frame - current_frame
+        
+        # Calculate sample range required for this batch of frames
+        start_sample = current_frame * hop_length
+        end_sample = (end_frame - 1) * hop_length + frame_length
+        
+        chunk_tensor = y_cpu[start_sample:end_sample].to(device)
+        
+        # Unfold on GPU
+        # shape: (count, frame_length)
+        windows = chunk_tensor.unfold(0, frame_length, hop_length)
+        
+        # Compute RMS for the batch
+        rms_chunk = torch.sqrt(torch.mean(windows**2, dim=1))
+        rms_values.append(rms_chunk)
+        
+        current_frame += count
+        pbar_rms.update(count)
+        
     pbar_rms.close()
-    rms = torch.cat(rms_chunks) if len(rms_chunks) > 0 else torch.tensor([], device=device)
-
-    # Spectral Flux
-    # STFT on GPU
+    
+    rms = torch.cat(rms_values) if rms_values else torch.tensor([], device=device)
+    
+    
+    # --- Spectral Flux (STFT) in Batches ---
+    
+    # STFT also requires large intermediate buffers. We process in batches to keep VRAM usage low.
+    # To match the original behavior (n_fft=2048, hop_length=512, center=True), 
+    # we manually pad the input on CPU and use center=False during batch processing.
+    
     window = torch.hann_window(2048).to(device)
-    stft = torch.stft(y, n_fft=2048, hop_length=hop_length, window=window, return_complex=True)
-    magnitude = torch.abs(stft)  # shape: (freq_bins, n_frames)
-
-    # Diff along time axis (dim 1) with progress bar
-    t_frames = magnitude.shape[1]
-    if t_frames <= 0:
-        spectral_flux = torch.tensor([], device=device)
-    else:
-        # We'll compute differences in chunks along time axis (excluding the first frame)
-        spectral_parts = [torch.tensor([0.0], device=device)]  # pad first value
-        time_batch = 4096 if t_frames > 4096 else max(1, t_frames)
-        total_time_batches = ((t_frames - 1) + time_batch - 1) // time_batch if t_frames > 1 else 0
-        pbar_flux = tqdm(total=total_time_batches, desc=f"Audio spectral flux", unit="batch")
-        for s in range(1, t_frames, time_batch):
-            L = min(time_batch, t_frames - s)
-            curr = magnitude[:, s : s + L]
-            prev = magnitude[:, s - 1 : s + L - 1]
-            diff = curr - prev
-            flux_chunk = torch.sqrt(torch.sum(diff**2, dim=0))
-            spectral_parts.append(flux_chunk)
-            pbar_flux.update(1)
-        pbar_flux.close()
-        spectral_flux = torch.cat(spectral_parts, dim=0)
-
-    # Match lengths: STFT and unfold might have slight size mismatch due to padding
+    
+    flux_values = []
+    
+    # Reuse valid batch size
+    STFT_FRAMES_PER_BATCH = 4096 * 2
+    
+    # Simulate center=True by padding the CPU array once before splitting.
+    pad_amount = 2048 // 2
+    # Reflect padding requires at least 2D input in some PyTorch versions
+    y_padded = torch.nn.functional.pad(y_cpu.unsqueeze(0), (pad_amount, pad_amount), mode='reflect').squeeze(0)
+    
+    # Calculate total frames for STFT from padded signal
+    num_stft_frames = (y_padded.shape[0] - 2048) // hop_length + 1
+    
+    pbar_flux = tqdm(total=num_stft_frames, desc="Audio Flux", unit="fr")
+    
+    current_frame = 0
+    # Initialize 'last_mag_col' as zeros (freq_bins,)
+    # n_fft=2048 -> freq_bins=1025
+    last_mag_col = torch.zeros(2048 // 2 + 1, device=device)
+    
+    while current_frame < num_stft_frames:
+        end_frame = min(current_frame + STFT_FRAMES_PER_BATCH, num_stft_frames)
+        count = end_frame - current_frame
+        
+        start_sample = current_frame * hop_length
+        end_sample = (end_frame - 1) * hop_length + 2048
+        
+        chunk_tensor = y_padded[start_sample:end_sample].to(device)
+        
+        # Run STFT on this chunk. center=False because we manually padded y_padded
+        # STFT shape: (freq_bins, count)
+        stft_chunk = torch.stft(
+            chunk_tensor, 
+            n_fft=2048, 
+            hop_length=hop_length, 
+            window=window, 
+            center=False, 
+            return_complex=True
+        )
+        
+        mag_chunk = torch.abs(stft_chunk)
+        
+        # Calculate Flux
+        # We need [prev_last, curr_0, curr_1, ...]
+        # Concatenate last_mag_col to the front
+        
+        # mag_chunk: (F, T)
+        combined = torch.cat([last_mag_col.unsqueeze(1), mag_chunk], dim=1)
+        
+        # Diff: (F, T)
+        diff = combined[:, 1:] - combined[:, :-1]
+        
+        # Flux: sum(diff^2) over freq, then sqrt
+        flux_chunk = torch.sqrt(torch.sum(diff**2, dim=0))
+        
+        flux_values.append(flux_chunk)
+        
+        # Update last_mag_col
+        last_mag_col = mag_chunk[:, -1]
+        
+        current_frame += count
+        pbar_flux.update(count)
+        
+        # Cleanup
+        del chunk_tensor, stft_chunk, mag_chunk, combined, diff
+    
+    pbar_flux.close()
+    
+    spectral_flux = torch.cat(flux_values) if flux_values else torch.tensor([], device=device)
+    
+    # --- Post Processing (same as before) ---
+    
+    # Match lengths
     min_len = min(rms.shape[0], spectral_flux.shape[0])
     rms = rms[:min_len]
     spectral_flux = spectral_flux[:min_len]
@@ -451,7 +536,7 @@ def compute_audio_action_profile(
     flux_std = (spectral_flux.std() + 1e-8) if spectral_flux.numel() > 0 else torch.tensor(1.0, device=device)
     flux_norm = (spectral_flux - flux_mean) / flux_std if spectral_flux.numel() > 0 else spectral_flux
 
-    # Smoothing (convolution)
+    # Smoothing
     def smooth_gpu(x: torch.Tensor, win: int = 21) -> torch.Tensor:
         if x.numel() == 0:
             return x
@@ -460,9 +545,7 @@ def compute_audio_action_profile(
         if win % 2 == 0:
             win += 1
         padding = win // 2
-        # kernel
         kernel = torch.ones(win, device=device) / win
-        # Add batch/channel dims for conv1d: (1, 1, seq_len)
         x_reshaped = x.view(1, 1, -1)
         kernel_reshaped = kernel.view(1, 1, -1)
         out = torch.nn.functional.conv1d(x_reshaped, kernel_reshaped, padding=padding)
