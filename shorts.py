@@ -250,7 +250,7 @@ def detect_video_scenes_gpu(video_path: Path, threshold: float = 27.0) -> List[T
     #    Score normalization: divide by sum(abs(weights)) = 3.
     batch_size = 16
     total_batches = (frame_count + batch_size - 1) // batch_size
-    pbar = tqdm(total=total_batches, desc=f"Detect scenes", unit="batch")
+    pbar = tqdm(total=total_batches, desc="Detect scenes", unit="batch")
 
     last_hsv: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
     cut_indices: List[int] = []
@@ -393,7 +393,7 @@ def compute_audio_action_profile(
     # Use a sliding window approach with batched chunks to avoid allocating 
     # the entire unfolded tensor on GPU, which causes OOM on large files.
     
-    CHUNK_SIZE = 48000 * 60  # ~1 minute chunks
+    # CHUNK_SIZE = 48000 * 60  # ~1 minute chunks (Unused)
     total_samples = y_cpu.shape[0]
     
     rms_values = []
@@ -606,7 +606,7 @@ def compute_video_action_profile(
         logging.warning("Failed to load video for action profile.", exc_info=True)
         return np.array([]), np.array([])
 
-    duration = len(vr) / vr.get_avg_fps()
+    # duration = len(vr) / vr.get_avg_fps()
     orig_fps = float(vr.get_avg_fps()) if hasattr(vr, 'get_avg_fps') else orig_fps_probe
     eff_fps = min(float(fps), float(orig_fps))
     if eff_fps <= 0:
@@ -628,7 +628,7 @@ def compute_video_action_profile(
     
     # We will iterate ALL frames sequentially, but only process the ones matching 'step'
     total_batches = (total_frames + batch_size - 1) // batch_size
-    pbar = tqdm(total=total_batches, desc=f"Video action", unit="batch")
+    pbar = tqdm(total=total_batches, desc="Video action", unit="batch")
     
     prev_batch_last = None
 
@@ -727,8 +727,10 @@ def compute_video_action_profile(
 
     # Smooth
     def smooth_gpu(x, win):
-        if win > x.shape[0]: win = x.shape[0]
-        if win < 2: return x
+        if win > x.shape[0]:
+            win = x.shape[0]
+        if win < 2:
+            return x
         kernel = torch.ones(win, device=x.device) / win
         x_reshaped = x.view(1, 1, -1)
         kernel_reshaped = kernel.view(1, 1, -1)
@@ -1006,7 +1008,7 @@ def render_video_gpu(
         src_fps = vr_probe.get_avg_fps()
         fps = min(src_fps, 60.0)
         del vr_probe  # Clean up immediately
-    except:
+    except Exception:
         fps = 30.0
 
     cmd_ffmpeg = [
@@ -1186,7 +1188,7 @@ def render_video_gpu(
             if process:
                 try:
                     process.stdin.close()
-                except:
+                except Exception:
                     pass
                 process.wait()
 
@@ -1197,7 +1199,8 @@ def render_video_gpu(
                 temp_audio.unlink()
 
             # Final memory sweep
-            if 'vr' in locals(): del vr
+            if 'vr' in locals():
+                del vr
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
@@ -1506,7 +1509,7 @@ def config_from_env() -> ProcessingConfig:
 
 def main() -> None:
     """Entry point for command-line execution."""
-    args = parse_args()
+    # args = parse_args()
     config = config_from_env()
     output_dir = Path("generated")
     output_dir.mkdir(exist_ok=True)

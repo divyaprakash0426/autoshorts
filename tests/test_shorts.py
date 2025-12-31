@@ -1,8 +1,6 @@
 import sys
-import types
 from unittest.mock import MagicMock
 import numpy as np
-import pytest
 from pathlib import Path
 
 # --- Mock GPU libraries BEFORE importing shorts ---
@@ -55,21 +53,15 @@ sys.modules["cupyx.scipy.ndimage"] = MagicMock()
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Import shorts AFTER mocking
-import shorts
-from shorts import (
+import shorts  # noqa: E402
+from shorts import (  # noqa: E402
     blur_gpu,
     combine_scenes,
     select_background_resolution,
     ProcessingConfig,
-    render_video_gpu,
-    scene_action_score,
-    best_action_window_start,
-    compute_audio_action_profile,
     compute_video_action_profile,
     _SecondsTime,
-    detect_video_scenes_gpu,
 )
-from moviepy import ColorClip
 
 
 # Helper to create scene tuples
@@ -97,7 +89,7 @@ def test_blur_gpu_uses_cupy():
     # Return mock torch tensor
     shorts.torch.utils.dlpack.from_dlpack.return_value = MagicMock()
 
-    res = blur_gpu(image_tensor)
+    blur_gpu(image_tensor)
 
     shorts.torch.to_dlpack.assert_called_with(image_tensor)
     shorts.cp.from_dlpack.assert_called()

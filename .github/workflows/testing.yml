@@ -45,7 +45,9 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # Filter out GPU-only dependencies (cupy) for CPU-based CI
+          grep -v "cupy" requirements.txt > requirements-ci.txt
+          pip install -r requirements-ci.txt
 
       - name: Run tests
         run: |
