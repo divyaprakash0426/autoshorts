@@ -585,7 +585,7 @@ def compute_video_action_profile(
         os.environ['DECORD_EOF_RETRY_MAX'] = str(max_retry)
     except Exception:
         pass
-    skip_tail = _get_env_int('DECORD_SKIP_TAIL_FRAMES', 180)
+    skip_tail = _get_env_int('DECORD_SKIP_TAIL_FRAMES', 0)
 
     ctx = gpu(0) if torch.cuda.is_available() else cpu(0)
 
