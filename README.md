@@ -5,6 +5,7 @@ Shorts Maker generates vertical video clips from longer gameplay footage. The sc
 **This version has been heavily optimized for NVIDIA GPUs using CUDA.**
 
 [![Tests](https://github.com/artryazanov/shorts-maker-gpu/actions/workflows/testing.yml/badge.svg)](https://github.com/artryazanov/shorts-maker-gpu/actions/workflows/testing.yml)
+[![Linting](https://github.com/artryazanov/shorts-maker-gpu/actions/workflows/linting.yml/badge.svg)](https://github.com/artryazanov/shorts-maker-gpu/actions/workflows/linting.yml)
 [![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](http://unlicense.org/)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=flat&logo=docker&logoColor=white)
@@ -16,9 +17,9 @@ Shorts Maker generates vertical video clips from longer gameplay footage. The sc
 - **GPU-Accelerated Processing**:
   - **Scene Detection**: Custom implementation using `decord` and PyTorch on GPU.
   - **Audio Analysis**: Uses `torchaudio` on GPU for fast RMS and spectral flux calculation.
-  - **Video Analysis**: Direct frame access on GPU via `decord` for motion estimation.
+  - **Video Analysis**: Sequential high-speed GPU streaming via `decord` for stable motion estimation (replaces random access).
   - **Image Processing**: `cupy` (CUDA-accelerated NumPy) used for heavy operations like blurring backgrounds.
-  - **Rendering**: Hardware encoding via `h264_nvenc` (NVIDIA NVENC).
+  - **Rendering**: Custom PyTorch+NVENC engine for high-performance rendering (MoviePy removed from render path).
 - Audio + video action scoring:
   - Combined ranking with tunable weights (defaults: audio 0.6, video 0.4).
 - Scenes ranked by combined action score rather than duration.
@@ -107,8 +108,23 @@ Supported variables (defaults shown):
 - `MIN_SHORT_LENGTH=15` — Minimum short length in seconds.
 - `MAX_SHORT_LENGTH=179` — Maximum short length in seconds.
 - `MAX_COMBINED_SCENE_LENGTH=300` — Maximum combined length (in seconds).
-- `DECORD_EOF_RETRY_MAX=65536` — Decord EOF retry attempts; increase for very long 4K files where the last frames are slow to retrieve.
-- `DECORD_SKIP_TAIL_FRAMES=0` — Optionally skip the last N frames when sampling video action profile to avoid problematic EOF reads (leave 0 unless you consistently hit EOF on specific files).
+- `DECORD_EOF_RETRY_MAX=65536` — Decord EOF retry attempts.
+- `DECORD_SKIP_TAIL_FRAMES=0` — Frames to skip at end of video to avoid EOF hangs (try 180-300 if hanging).
+
+## Development
+
+### Linting
+
+This project uses `ruff` for fast linting.
+
+```bash
+pip install ruff
+ruff check .
+```
+
+### Dependency Updates
+
+Dependabot is configured to check for updates weekly (pip) and monthly (actions).
 
 ## Running Tests
 
