@@ -5,7 +5,7 @@ opencv-python==4.8.1.78
 pytest==7.4.3
 python-dotenv==1.0.0
 random2==1.0.2
-soundfile==0.12.1
+soundfile==0.13.1
 tqdm
 # decord removed - install manually
 # torch/torchaudio removed - they are built into the image
