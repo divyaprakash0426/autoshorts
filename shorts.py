@@ -585,7 +585,7 @@ def compute_video_action_profile(
         os.environ['DECORD_EOF_RETRY_MAX'] = str(max_retry)
     except Exception:
         pass
-    skip_tail = _get_env_int('DECORD_SKIP_TAIL_FRAMES', 0)
+    skip_tail = _get_env_int('DECORD_SKIP_TAIL_FRAMES', 180)
 
     ctx = gpu(0) if torch.cuda.is_available() else cpu(0)
 
@@ -617,121 +617,96 @@ def compute_video_action_profile(
     end_index_exclusive = len(vr) - max(0, int(skip_tail))
     if end_index_exclusive < 0:
         end_index_exclusive = 0
-    indices = list(range(0, end_index_exclusive, step))
-
-    if not indices:
-        return np.array([]), np.array([])
+    # indices = list(range(0, end_index_exclusive, step)) # Unused in sequential mode
 
     motions = []
     times = []
 
-    # Helper: safe batched get with retries & chunking
-    try:
-        from decord._ffi.base import DECORDError as _DecordError
-    except Exception:
-        _DecordError = Exception  # Fallback
-
-    def safe_get_batch(reader: VideoReader, idxs: List[int]) -> Tuple[Optional[torch.Tensor], List[int]]:
-        if not idxs:
-            return None, []
-        try:
-            frames = reader.get_batch(idxs)
-            return frames, idxs
-        except _DecordError as e:
-            # Split and try smaller chunks
-            if len(idxs) == 1:
-                # Drop this problematic index
-                logging.warning(
-                    "\nDecord EOF retry exceeded for last indices; skipping tail frame index %s. Hint: increase DECORD_EOF_RETRY_MAX or set DECORD_SKIP_TAIL_FRAMES.",
-                    idxs[0],
-                )
-                return None, []
-            mid = len(idxs) // 2
-            left_frames, left_kept = safe_get_batch(reader, idxs[:mid])
-            right_frames, right_kept = safe_get_batch(reader, idxs[mid:])
-            kept = left_kept + right_kept
-            if not kept:
-                return None, []
-            if left_frames is None:
-                return right_frames, right_kept
-            if right_frames is None:
-                return left_frames, left_kept
-            try:
-                return torch.cat([left_frames, right_frames], dim=0), kept
-            except Exception:
-                # As a last resort, fetch one-by-one preserving order
-                tensors = []
-                kept_final = []
-                for ii in idxs:
-                    try:
-                        t = reader.get_batch([ii])
-                        tensors.append(t)
-                        kept_final.append(ii)
-                    except Exception:
-                        logging.warning("Skipping unreadable frame index %s at EOF.", ii)
-                if not tensors:
-                    return None, []
-                return torch.cat(tensors, dim=0), kept_final
-        except Exception:
-            # Unknown error type; try to continue with singles
-            tensors = []
-            kept_final = []
-            for ii in idxs:
-                try:
-                    t = reader.get_batch([ii])
-                    tensors.append(t)
-                    kept_final.append(ii)
-                except Exception:
-                    logging.warning("Skipping unreadable frame index %s due to unknown error.", ii)
-            if not tensors:
-                return None, []
-            return torch.cat(tensors, dim=0), kept_final
-
-    # Process in batches - small size to save memory
-    batch_size = 2
+    # Use strict sequential reading to avoid seeking hangs, same as detect_video_scenes_gpu
+    batch_size = 16 
+    total_frames = end_index_exclusive
+    
+    # We will iterate ALL frames sequentially, but only process the ones matching 'step'
+    total_batches = (total_frames + batch_size - 1) // batch_size
+    pbar = tqdm(total=total_batches, desc=f"Video action", unit="batch")
+    
     prev_batch_last = None
 
-    total_batches = (len(indices) + batch_size - 1) // batch_size
-    pbar = tqdm(total=total_batches, desc=f"Video action", unit="batch")
-
-    for i in range(0, len(indices), batch_size):
-        batch_indices = indices[i : i + batch_size]
-        frames, kept_idx = safe_get_batch(vr, batch_indices)
-        if frames is None or len(kept_idx) == 0:
+    for start_idx in range(0, total_frames, batch_size):
+        end_idx = min(start_idx + batch_size, total_frames)
+        batch_range = range(start_idx, end_idx)
+        
+        # Read ALL frames in this range strictly sequentially
+        try:
+            frames = vr.get_batch(batch_range)
+        except Exception as e:
+            logging.warning(f"Error reading batch {batch_range}: {e}. Skipping.")
             pbar.update(1)
             continue
 
-        # Frames are already resized. Convert to float.
-        frames_small = frames.float()
+        # Now subselect frames that match our step
+        # indices to keep relative to the batch start
+        # Global index i corresponds to batch_range[k]
+        # We want i such that i % step == 0
+        
+        # global indices: list(batch_range)
+        # local indices: k
+        
+        # Filter in memory
+        kept_local_indices = []
+        kept_global_indices = []
+        
+        for k, global_idx in enumerate(batch_range):
+            if global_idx % step == 0:
+                kept_local_indices.append(k)
+                kept_global_indices.append(global_idx)
+                
+        if not kept_local_indices:
+            # We decoded this batch but don't need any frames from it for the score. 
+            # We still needed to read it to maintain sequential stream for GPU.
+            # Just update prev_batch_last if needed to maintain continuity or just skip?
+            # For differencing, we need the "previous sampled frame". 
+            # If we skip whole batches, we might lose continuity of "prev_batch_last".
+            # BUT: prev_batch_last should be the last *sampled* frame.
+            del frames
+            pbar.update(1)
+            continue
 
+        # Subselect
+        frames_subset = frames[kept_local_indices].float()
+        
         # Grayscale
-        gray = (frames_small[..., 0] * 0.299 +
-                frames_small[..., 1] * 0.587 +
-                frames_small[..., 2] * 0.114)
+        gray = (frames_subset[..., 0] * 0.299 +
+                frames_subset[..., 1] * 0.587 +
+                frames_subset[..., 2] * 0.114)
 
         # Diff
+        # We need to diff against the *last sampled frame*.
+        # If this is the start of the process, diff against self[0].
+        # If we have a prev_batch_last, diff[0] = gray[0] - prev_batch_last
+        
         if prev_batch_last is not None:
-            diffs = torch.abs(gray - torch.cat([prev_batch_last.unsqueeze(0), gray[:-1]]))
+            # Prepend the last sampled frame to compute diffs
+            combined = torch.cat([prev_batch_last.unsqueeze(0), gray])
+            diffs = torch.abs(combined[1:] - combined[:-1])
         else:
-            # For the very first frame, diff is 0
-            diffs = torch.abs(gray - torch.cat([gray[0:1], gray[:-1]]))
+            # Very first batch
+            combined = torch.cat([gray[0:1], gray])
+            diffs = torch.abs(combined[1:] - combined[:-1])
             diffs[0] = 0.0
 
         # Mean diff per frame
         batch_motions = diffs.mean(dim=(1, 2))
-
         motions.append(batch_motions)
 
-        # Timestamps; align to kept indices actually read
-        batch_times = torch.tensor(kept_idx, device=gray.device).float() / orig_fps
+        # Timestamps
+        batch_times = torch.tensor(kept_global_indices, device=gray.device).float() / orig_fps
         times.append(batch_times)
 
+        # Update last processed frame for next continuity
         prev_batch_last = gray[-1]
 
-        del frames, frames_small, gray, diffs
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
+        del frames, frames_subset, gray, diffs
         pbar.update(1)
 
     pbar.close()
