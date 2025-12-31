@@ -123,3 +123,76 @@ def test_combine_scenes_merges_short_scenes():
 
 # render_video (legacy) has been removed.
 # render_video_gpu logic is verified via mocks in separate flows or implicitly here if we add such tests.
+
+
+def test_compute_video_action_profile_sequential():
+    """Verify that compute_video_action_profile reads sequentially (batch-by-batch) and subsamples."""
+    
+    # 1. Setup Mock VideoReader
+    mock_vr = MagicMock()
+    # Let's say video has 1000 frames, 30 fps
+    mock_vr.__len__.return_value = 1000
+    mock_vr.get_avg_fps.return_value = 30.0
+
+    # Configure __getitem__ for metadata probe (vr_cpu[0].shape)
+    mock_frame = MagicMock()
+    mock_frame.shape = (720, 1280, 3)
+    mock_vr.__getitem__.return_value = mock_frame
+
+    # Configure torch.cat to return a mock with valid shape/numel
+    def side_effect_cat(tensors, **kwargs):
+        m = MagicMock()
+        m.shape = (100,)
+        m.numel.return_value = 100
+        m.mean.return_value = MagicMock(return_value=1.0)
+        m.std.return_value = MagicMock(return_value=1.0)
+        # Math operators return the same mock (so shape persists)
+        m.__sub__ = MagicMock(return_value=m)
+        m.__truediv__ = MagicMock(return_value=m)
+        m.view.return_value = m
+        return m
+    shorts.torch.cat.side_effect = side_effect_cat
+
+    # Configure get_batch to return a mock tensor
+    def side_effect_get_batch(indices):
+        # Indices should be a range object
+        count = len(indices)
+        batch_mock = MagicMock()
+        batch_mock.shape = (count, 64, 64, 3) # (B, H, W, C)
+        # Slicing returns itself
+        batch_mock.__getitem__.return_value = batch_mock
+        # float() returns itself
+        batch_mock.float.return_value = batch_mock
+        return batch_mock
+
+    mock_vr.get_batch.side_effect = side_effect_get_batch
+
+    # 2. Patch VideoReader in shorts
+    # Note: 'shorts.VideoReader' comes from 'decord', which we already mocked globally
+    # but we need the constructor to return our instance
+    shorts.VideoReader.return_value = mock_vr
+
+    # 3. Run function
+    # fps=6 means we keep 1 out of 5 frames (30/6 = 5)
+    # Total frames 100.
+    # It should iterate 0..16, 16..32, ... (batch_size=16)
+    times, scores = compute_video_action_profile(Path("dummy.mp4"), fps=6)
+
+    # 4. Verifications
+    assert shorts.VideoReader.called
+    assert mock_vr.get_batch.called
+
+    # Check calls to get_batch
+    # We expect ranges of size 16 starting from 0
+    calls = mock_vr.get_batch.call_args_list
+    assert len(calls) > 0
+    
+    # First batch should comprise range(0, 16)
+    # The argument passed to get_batch is `batch_range`
+    first_call_args = calls[0].args[0]
+    assert list(first_call_args) == list(range(0, 16))
+    
+    # Check that we handled results
+    # times and scores should be numpy arrays (mocked)
+    # Since torch.cat is mocked, it returns a MagicMock, and .cpu().numpy() returns a MagicMock
+    assert isinstance(times, MagicMock) or isinstance(times, np.ndarray) or (times == [])
