@@ -122,10 +122,6 @@ pip install ruff
 ruff check .
 ```
 
-### Dependency Updates
-
-Dependabot is configured to check for updates weekly (pip) and monthly (actions).
-
 ## Running Tests
 
 Unit tests live in the `tests/` folder. Run them with:

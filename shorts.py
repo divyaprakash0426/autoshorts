@@ -1019,7 +1019,14 @@ def render_video_gpu(
         "-pix_fmt", "rgb24",
         "-r", f"{fps}",
         "-i", "-",
-        "-i", str(temp_audio),
+    ]
+
+    has_valid_audio = temp_audio.exists() and temp_audio.stat().st_size > 0
+
+    if has_valid_audio:
+        cmd_ffmpeg.extend(["-i", str(temp_audio)])
+
+    cmd_ffmpeg.extend([
         "-c:v", "hevc_nvenc",  # Use hardware encoder
         "-preset", "p7",
         "-tune", "hq",
@@ -1030,14 +1037,12 @@ def render_video_gpu(
         "-pix_fmt", "yuv420p",
         "-g", f"{int(fps * 2)}",
         "-bf", "2",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        str(output_path)
-    ]
+    ])
 
-    if not temp_audio.exists():
-        cmd_ffmpeg = [x for x in cmd_ffmpeg if x not in ["-i", str(temp_audio), "-c:a", "aac"]]
+    if has_valid_audio:
+        cmd_ffmpeg.extend(["-c:a", "aac", "-b:a", "192k"])
+
+    cmd_ffmpeg.extend(["-shortest", str(output_path)])
 
     # redirect stderr to a file to prevent buffer deadlock
     log_path = output_path.with_suffix(".ffmpeg.log")
