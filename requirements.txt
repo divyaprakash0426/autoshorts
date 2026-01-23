@@ -1,7 +1,7 @@
 cupy-cuda12x>=13.0.0
 moviepy==2.2.1
 numpy<2.0.0
-opencv-python==4.9.0.80
+opencv-python==4.13.0.90
 pytest==9.0.2
 python-dotenv==1.2.1
 random2==1.0.2
