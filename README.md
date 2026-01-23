@@ -195,18 +195,6 @@ generated/
 ├── video_name scene-1.mp4
 └── ...
 ```
-
-### Example Output
-
-After processing, you'll find clips like:
-
-| File | Description |
-|------|-------------|
-| `scene-0.mp4` | Highest-ranked action scene (24MB, ~60s) |
-| `scene-1.mp4` | Second-ranked scene (10MB, ~30s) |
-| `scene-2.mp4` | Third-ranked scene with AI captions |
-| `scene-3.mp4` | Fourth-ranked scene with TTS voiceover |
-
 ---
 
 ## 🧪 Development
