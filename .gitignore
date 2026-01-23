@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Environment files (contain API keys)
+.env
+
+# Build artifacts
+bin/
+_build_*/
+*.egg-info/
+
+# Project-specific
+gameplay/
+generated/*
+!generated/showcase/
+demo/
+assets/*.wav

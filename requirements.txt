@@ -1,0 +1,24 @@
+cupy-cuda12x>=13.0.0
+moviepy==2.2.1
+numpy<2.0.0
+opencv-python==4.9.0.80
+pytest==9.0.2
+python-dotenv==1.2.1
+random2==1.0.2
+soundfile==0.13.1
+tqdm
+ #removed - install manually
+# torch/torchaudio removed - they are built into the image
+
+# AI Providers
+google-genai>=1.0.0
+openai>=1.0.0
+
+# Subtitles
+openai-whisper
+pycaps[all] @ git+https://github.com/francozanardi/pycaps.git
+nest_asyncio>=1.6.0  # Fix Playwright async/sync conflict
+
+# TTS Voiceover
+chatterbox-tts
+
