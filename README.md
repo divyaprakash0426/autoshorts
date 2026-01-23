@@ -1,89 +1,134 @@
-# Shorts Maker (GPU Optimized)
+# AutoShorts
 
-Shorts Maker generates vertical video clips from longer gameplay footage. The script detects scenes, computes audio and video action profiles (sound intensity + visual motion), and combines them to rank scenes by overall intensity. It then crops to the desired aspect ratio and renders ready‑to‑upload shorts.
+> Automatically generate viral-ready vertical short clips from long-form gameplay footage using AI-powered scene analysis, GPU-accelerated rendering, and optional AI voiceovers.
 
-**This version has been heavily optimized for NVIDIA GPUs using CUDA.**
+AutoShorts analyzes your gameplay videos to identify the most engaging moments—action sequences, funny fails, or highlight achievements—then automatically crops, renders, and adds subtitles or AI voiceovers to create ready-to-upload short-form content.
 
-For the original CPU-only version, please visit [Shorts Maker](https://github.com/artryazanov/shorts-maker).
-
-[![Tests](https://github.com/artryazanov/shorts-maker-gpu/actions/workflows/testing.yml/badge.svg)](https://github.com/artryazanov/shorts-maker-gpu/actions/workflows/testing.yml)
-[![Linting](https://github.com/artryazanov/shorts-maker-gpu/actions/workflows/linting.yml/badge.svg)](https://github.com/artryazanov/shorts-maker-gpu/actions/workflows/linting.yml)
-[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](http://unlicense.org/)
-![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
-![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=flat&logo=docker&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.10-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?style=flat&logo=PyTorch&logoColor=white)
-![CUDA](https://img.shields.io/badge/CUDA-12.1-green)
+![CUDA](https://img.shields.io/badge/CUDA-12.x-green)
+![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=flat&logo=docker&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Features
+---
 
-- **GPU-Accelerated Processing**:
-  - **Scene Detection**: Custom implementation using `decord` and PyTorch on GPU.
-  - **Audio Analysis**: Uses `torchaudio` on GPU for fast RMS and spectral flux calculation.
-  - **Video Analysis**: Sequential high-speed GPU streaming via `decord` for stable motion estimation (replaces random access).
-  - **Image Processing**: `cupy` (CUDA-accelerated NumPy) used for heavy operations like blurring backgrounds.
-  - **Rendering**: Custom PyTorch+NVENC engine for high-performance rendering (MoviePy removed from render path).
-- Audio + video action scoring:
-  - Combined ranking with tunable weights (defaults: audio 0.6, video 0.4).
-- Scenes ranked by combined action score rather than duration.
-- Smart cropping with optional blurred background for non‑vertical footage.
-- Retry logic during rendering to avoid spurious failures.
-- Configuration via `.env` environment variables.
+## 🎬 Example Output
 
-## Requirements
+Here are some shorts automatically generated from gameplay footage:
 
-- **NVIDIA GPU** with CUDA support.
-- **NVIDIA Drivers** (compatible with CUDA 12.1+ recommended).
-- Python 3.10+
-- FFmpeg (required by `moviepy`).
-- System libraries: `libgl1`, `libglib2.0-0` (often needed for vision libraries).
+<https://github.com/user-attachments/assets/PLACEHOLDER_VIDEO_1>
 
-Python dependencies (see `requirements.txt`):
-- `torch`, `torchaudio` (with CUDA support)
-- `cupy-cuda12x`
-- `decord`
-- `moviepy`
+<https://github.com/user-attachments/assets/PLACEHOLDER_VIDEO_2>
 
-## Installation
+> **Note**: After pushing, drag your `.mp4` files into a GitHub issue to get uploadable URLs, then replace the placeholders above.
 
-### Manual Setup (Linux with CUDA)
+---
 
-Ensure you have the NVIDIA drivers and CUDA toolkit installed.
+## ✨ Features
+
+### 🎯 AI-Powered Scene Analysis
+
+- **Multi-Provider Support**: Choose between **OpenAI** (GPT-5-mini, GPT-4o) or **Google Gemini** for scene analysis
+- **Semantic Analysis Modes**:
+  - `action` — Focus on intense combat/action moments
+  - `funny` — Detect fail compilations and humorous moments  
+  - `highlight` — Find memorable achievements and clutch plays
+  - `mixed` — Auto-detect the best category for each clip (recommended)
+
+### 🎙️ Subtitle Generation
+
+- **Speech Mode**: Uses OpenAI Whisper to transcribe voice/commentary
+- **AI Captions Mode**: AI-generated contextual captions for gameplay without voice
+- **Caption Styles**: `gaming`, `dramatic`, `funny`, `minimal`, or `auto`
+- **PyCaps Integration**: Multiple visual templates including `hype`, `retro-gaming`, `neo-minimal`
+- **AI Enhancement**: Semantic tagging and emoji suggestions (e.g., "HEADSHOT! 💀🔥")
+
+### 🔊 AI Voiceover (ChatterBox TTS)
+
+- **Local TTS Generation**: No cloud API needed for voice synthesis
+- **Emotion Control**: Adjustable emotion/exaggeration levels for English
+- **Multilingual Support**: 20+ languages including Japanese, Korean, Chinese, Spanish, French, and more
+- **Voice Cloning**: Optional reference audio for custom voice styles
+- **Smart Mixing**: Automatic ducking of game audio when voiceover plays
+
+### ⚡ GPU-Accelerated Pipeline
+
+- **Scene Detection**: Custom implementation using `decord` + PyTorch on GPU
+- **Audio Analysis**: `torchaudio` on GPU for fast RMS and spectral flux calculation
+- **Video Analysis**: GPU streaming via `decord` for stable motion estimation
+- **Image Processing**: `cupy` (CUDA-accelerated NumPy) for blur and transforms
+- **Rendering**: PyTorch + **NVENC** hardware encoder for ultra-fast rendering
+
+### 📐 Smart Video Processing
+
+- Scenes ranked by combined action score (audio 0.6 + video 0.4 weights)
+- Configurable aspect ratio (default 9:16 for TikTok/Shorts/Reels)
+- Smart cropping with optional blurred background for non-vertical footage
+- Retry logic during rendering to avoid spurious failures
+
+### 🛡️ Robust Fallback System
+
+AutoShorts is designed to work even when optimal components fail:
+
+| Component | Primary | Fallback |
+|-----------|---------|----------|
+| **Video Encoding** | NVENC (GPU) | libx264 (CPU) |
+| **Subtitle Rendering** | PyCaps (styled) | FFmpeg burn-in (basic) |
+| **AI Analysis** | OpenAI/Gemini API | Heuristic scoring (local) |
+| **TTS Device** | CUDA (GPU) | CPU inference |
+
+---
+
+## 📋 Requirements
+
+### Hardware
+
+- **NVIDIA GPU** with CUDA support (RTX series recommended for NVENC + TTS)
+- **NVIDIA Drivers** compatible with CUDA 12.x
+
+### Software
+
+- Python 3.10
+- FFmpeg 4.4.2 (for Decord compatibility)
+- CUDA Toolkit with `nvcc` (for building Decord from source)
+- System libraries: `libgl1`, `libglib2.0-0`
+
+---
+
+## 🚀 Installation
+
+### Option 1: Makefile Installation (Recommended)
+
+The Makefile handles everything automatically—environment creation, dependency installation, and building Decord with CUDA support.
 
 ```bash
-git clone https://github.com/artryazanov/shorts-maker-gpu.git
-cd shorts-maker
-python3 -m venv venv
-source venv/bin/activate
+git clone https://github.com/divyaprakash0426/autoshorts.git
+cd autoshorts
 
-# Install dependencies (ensure pip picks up the CUDA versions for torch/cupy)
-pip install -r requirements.txt
+# Run the installer (uses conda/micromamba automatically)
+make install
+
+# Activate the environment
+overlay use .venv/bin/activate.nu    # For Nushell
+# OR
+source .venv/bin/activate            # For Bash/Zsh
 ```
 
-If you encounter issues with PyTorch or CuPy not finding the GPU, refer to their respective installation guides for your specific CUDA version.
+The Makefile will:
 
-## Usage
+1. Download micromamba if conda/mamba is not found
+2. Create a Python 3.10 environment with FFmpeg 4.4.2
+3. Install NV Codec Headers for NVENC support
+4. Build Decord from source with CUDA enabled
+5. Install all pip requirements
 
-1. Place source videos inside the `gameplay/` directory.
-2. Run the script:
+### Option 2: Docker (GPU Required)
 
-```bash
-python shorts.py
-```
-
-3. Generated clips are written to the `generated/` directory.
-
-During processing, the log shows an action score for each combined scene and the final list sorted by that score. The top scenes (by action intensity) are rendered first using NVENC.
-
-## Docker (Recommended)
-
-The easiest way to run this application is using Docker with the NVIDIA Container Toolkit.
-
-**Prerequisite**: [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) must be installed on the host.
-
-Build and run:
+**Prerequisite**: [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) must be installed.
 
 ```bash
-docker build -t shorts-maker .
+# Build the image
+docker build -t autoshorts .
 
 # Run with GPU access
 docker run --rm \
@@ -91,58 +136,140 @@ docker run --rm \
     -v $(pwd)/gameplay:/app/gameplay \
     -v $(pwd)/generated:/app/generated \
     --env-file .env \
-    shorts-maker
+    autoshorts
 ```
 
-Note the `--gpus all` flag, which is essential for the application to access hardware acceleration.
+> **Note**: The `--gpus all` flag is essential for NVENC and CUDA acceleration.
 
-## Configuration
+---
 
-Copy `.env.example` to `.env` and adjust values as needed.
+## ⚙️ Configuration
 
-Supported variables (defaults shown):
-- `TARGET_RATIO_W=1` — Width part of the target aspect ratio (e.g., 9 for 9:16).
-- `TARGET_RATIO_H=1` — Height part of the target aspect ratio (e.g., 16 for 9:16).
-- `SCENE_LIMIT=6` — Maximum number of top scenes rendered per source video.
-- `X_CENTER=0.5` — Horizontal crop center in range [0.0, 1.0].
-- `Y_CENTER=0.5` — Vertical crop center in range [0.0, 1.0].
-- `MAX_ERROR_DEPTH=3` — Maximum retry depth if rendering fails.
-- `MIN_SHORT_LENGTH=15` — Minimum short length in seconds.
-- `MAX_SHORT_LENGTH=179` — Maximum short length in seconds.
-- `MAX_COMBINED_SCENE_LENGTH=300` — Maximum combined length (in seconds).
-- `DECORD_EOF_RETRY_MAX=65536` — Decord EOF retry attempts.
-- `DECORD_SKIP_TAIL_FRAMES=0` — Frames to skip at end of video to avoid EOF hangs (try 180-300 if hanging).
+Copy `.env.example` to `.env` and configure:
 
-## Development
+```bash
+cp .env.example .env
+```
+
+### Key Configuration Options
+
+| Category | Variable | Description |
+|----------|----------|-------------|
+| **AI Provider** | `AI_PROVIDER` | `openai`, `gemini`, or `local` |
+| | `AI_ANALYSIS_ENABLED` | Enable/disable AI scene analysis |
+| | `OPENAI_MODEL` | Model for analysis (e.g., `gpt-5-mini`) |
+| | `AI_SCORE_WEIGHT` | How much to weight AI vs heuristic (0.0-1.0) |
+| **Semantic Analysis** | `SEMANTIC_GOAL` | `action`, `funny`, `highlight`, or `mixed` |
+| | `CANDIDATE_CLIP_COUNT` | Number of clips to analyze |
+| **Subtitles** | `ENABLE_SUBTITLES` | Enable subtitle generation |
+| | `SUBTITLE_MODE` | `speech` (Whisper), `ai_captions`, or `none` |
+| | `CAPTION_STYLE` | `gaming`, `dramatic`, `funny`, `minimal`, `auto` |
+| | `PYCAPS_TEMPLATE` | Visual template for captions |
+| **TTS Voiceover** | `ENABLE_TTS` | Enable ChatterBox voiceover |
+| | `TTS_LANGUAGE` | Language code (e.g., `en`, `ja`, `es`) |
+| | `TTS_EMOTION_LEVEL` | Emotion intensity or `auto` |
+| **Video Output** | `TARGET_RATIO_W/H` | Aspect ratio (default 9:16) |
+| | `SCENE_LIMIT` | Max clips per source video |
+| | `MIN/MAX_SHORT_LENGTH` | Clip duration bounds (seconds) |
+
+See `.env.example` for the complete list with detailed descriptions.
+
+---
+
+## 📖 Usage
+
+1. **Place source videos** in the `gameplay/` directory
+2. **Run the script**:
+
+   ```bash
+   python run.py
+   ```
+
+3. **Generated clips** are saved to `generated/`
+
+### Output Structure
+
+```
+generated/
+├── video_name scene-0.mp4          # Rendered short clip
+├── video_name scene-0_sub.json     # Subtitle data
+├── video_name scene-0.ffmpeg.log   # Render log
+├── video_name scene-1.mp4
+└── ...
+```
+
+### Example Output
+
+After processing, you'll find clips like:
+
+| File | Description |
+|------|-------------|
+| `scene-0.mp4` | Highest-ranked action scene (24MB, ~60s) |
+| `scene-1.mp4` | Second-ranked scene (10MB, ~30s) |
+| `scene-2.mp4` | Third-ranked scene with AI captions |
+| `scene-3.mp4` | Fourth-ranked scene with TTS voiceover |
+
+---
+
+## 🧪 Development
 
 ### Linting
-
-This project uses `ruff` for fast linting.
 
 ```bash
 pip install ruff
 ruff check .
 ```
 
-## Running Tests
-
-Unit tests live in the `tests/` folder. Run them with:
+### Running Tests
 
 ```bash
 pytest -q
 ```
 
-Note: The tests are designed to mock GPU availability if it is missing, so they can run in standard CI environments.
+> Tests mock GPU availability and can run in standard CI environments.
 
-## Troubleshooting
+### Debug Variables
 
-- **"Torch not installed" / "CUDA not available"**: Ensure you are running inside the Docker container with `--gpus all` or have the correct CUDA toolkit installed locally.
-- **NVENC Error**: If `h264_nvenc` fails, the script attempts to fall back to software encoding (`libx264`). Check if your GPU supports NVENC and if the drivers are up to date.
+For faster iteration during development, you can skip expensive steps using these environment variables in your `.env`:
 
-## Acknowledgments
+| Variable | Description |
+|----------|-------------|
+| `DEBUG_SKIP_ANALYSIS=1` | Skip AI scene analysis (uses cached/heuristic scores) |
+| `DEBUG_SKIP_RENDER=1` | Skip video rendering (useful for testing analysis only) |
+| `DEBUG_RENDERED_CLIPS="path1:category,path2"` | Test with specific pre-rendered clips |
 
-Thank the Binary-Bytes for the original code and idea: https://github.com/Binary-Bytes/Auto-YouTube-Shorts-Maker
+Example workflow for testing subtitles only:
 
-## License
+```bash
+# In .env
+DEBUG_SKIP_ANALYSIS=1
+DEBUG_SKIP_RENDER=1
+DEBUG_RENDERED_CLIPS="generated/test_clip.mp4:action"
+```
 
-This project is released under the [Unlicense](LICENSE).
+---
+
+## 🔧 Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| **"CUDA not available"** | Ensure `--gpus all` (Docker) or CUDA toolkit is installed |
+| **NVENC Error** | Falls back to `libx264` automatically; check GPU driver |
+| **PyCaps fails** | Falls back to FFmpeg burn-in subtitles automatically |
+| **Decord EOF hang** | Increase `DECORD_EOF_RETRY_MAX` or set `DECORD_SKIP_TAIL_FRAMES=300` |
+| **API rate limits** | Switch to `gpt-5-mini` (10M free tokens/day) or use `local` provider |
+
+---
+
+## 🙏 Acknowledgments
+
+This project builds upon the excellent work of:
+
+- **[artryazanov/shorts-maker-gpu](https://github.com/artryazanov/shorts-maker-gpu)** — Original GPU-optimized shorts maker
+- **[Binary-Bytes/Auto-YouTube-Shorts-Maker](https://github.com/Binary-Bytes/Auto-YouTube-Shorts-Maker)** — Original concept and inspiration
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).

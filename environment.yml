@@ -1,0 +1,14 @@
+name: autoshorts
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - ffmpeg=4.4.2
+  - cmake
+  - git
+  - pkg-config
+  - compilers
+  - pip
+  - pip:
+    - -r requirements.txt

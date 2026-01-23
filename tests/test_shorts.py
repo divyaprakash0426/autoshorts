@@ -49,8 +49,8 @@ sys.modules["cupyx.scipy"] = MagicMock()
 sys.modules["cupyx.scipy.ndimage"] = MagicMock()
 
 
-# Ensure the project root is on the import path.
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+# Ensure the src directory is on the import path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 # Import shorts AFTER mocking
 import shorts  # noqa: E402
