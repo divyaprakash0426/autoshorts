@@ -251,7 +251,7 @@ DEBUG_RENDERED_CLIPS="generated/test_clip.mp4:action"
 
 This project builds upon the excellent work of:
 
-- **[artryazanov/shorts-maker-gpu](https://github.com/artryazanov/shorts-maker-gpu)** — Original GPU-optimized shorts maker
+- **[artryazanov/shorts-maker-gpu](https://github.com/artryazanov/shorts-maker-gpu)** — Heuristics-based shorts maker
 - **[Binary-Bytes/Auto-YouTube-Shorts-Maker](https://github.com/Binary-Bytes/Auto-YouTube-Shorts-Maker)** — Original concept and inspiration
 
 ---
