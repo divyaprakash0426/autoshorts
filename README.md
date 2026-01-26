@@ -195,6 +195,7 @@ generated/
 ├── video_name scene-1.mp4
 └── ...
 ```
+
 ---
 
 ## 🧪 Development
@@ -247,6 +248,15 @@ DEBUG_RENDERED_CLIPS="generated/test_clip.mp4:action"
 
 ---
 
+## 🤝 Contributing & Roadmap
+
+We love contributions! Whether you're fixing a bug, adding a feature, or improving documentation:
+
+- Check out our **[Contributing Guide](CONTRIBUTING.md)** to get started.
+- See the **[Roadmap](ROADMAP.md)** for our future plans (YOLO Auto-Zoom, Next-Gen TTS, etc.).
+
+---
+
 ## 🙏 Acknowledgments
 
 This project builds upon the excellent work of:
@@ -261,4 +271,3 @@ This project builds upon the excellent work of:
 This project is licensed under the [MIT License](LICENSE).
 
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/divyaprakash0426)
-
