@@ -567,7 +567,8 @@ def get_caption_style() -> str:
 def generate_subtitles(
     video_path: Path, 
     output_path: Optional[Path] = None,
-    detected_category: Optional[str] = None
+    detected_category: Optional[str] = None,
+    story_narration: Optional[str] = None
 ) -> Optional[Path]:
     """Full subtitle pipeline with mode selection.
     
@@ -581,6 +582,7 @@ def generate_subtitles(
         output_path: Optional output path. If None, creates alongside input.
         detected_category: Optional category from AI analysis ("action", "funny", "highlight")
                           Used when CAPTION_STYLE=auto to match style to content.
+        story_narration: Pre-generated narration text for story modes (cross-clip narrative)
         
     Returns:
         Path to subtitled video, or None if subtitles are disabled/failed
@@ -605,6 +607,19 @@ def generate_subtitles(
     tag_css = ""
     word_lists = {}
     
+    # Determine caption style (for both ai_captions and TTS voice selection)
+    caption_style = None
+    if mode == "ai_captions":
+        caption_style = get_caption_style()
+        
+        # Auto style matching based on detected category
+        if caption_style == "auto" and detected_category:
+            from ai_providers import ClipScore
+            caption_style = ClipScore.CAPTION_STYLE_MAP.get(detected_category, "gaming")
+            logging.info(f"Auto-matched caption style: {caption_style} (from category: {detected_category})")
+        elif caption_style == "auto":
+            caption_style = "gaming"  # Default fallback
+    
     try:
         if mode == "speech":
             # Whisper transcription mode
@@ -613,8 +628,6 @@ def generate_subtitles(
             
         elif mode == "ai_captions":
             # AI-generated captions mode
-            logging.info("Using AI caption generation mode")
-            
             from ai_providers import (
                 generate_ai_captions, 
                 captions_to_srt, 
@@ -624,60 +637,339 @@ def generate_subtitles(
                 Caption
             )
             
-            # Determine caption style
-            style = get_caption_style()
-            
-            # Auto style matching based on detected category
-            if style == "auto" and detected_category:
-                style_map = {
-                    "action": "gaming",
-                    "funny": "funny",
-                    "highlight": "dramatic",
-                }
-                style = style_map.get(detected_category, "gaming")
-                logging.info(f"Auto-matched caption style: {style} (from category: {detected_category})")
-            elif style == "auto":
-                style = "gaming"  # Default fallback
+            # Check if we have pre-generated story narration
+            if story_narration:
+                logging.info("Using pre-generated story narration")
                 
-            max_captions = int(os.getenv("MAX_CAPTIONS", "8"))
-            
-            result = generate_ai_captions(video_path, style=style, max_captions=max_captions)
-            
-            if not result.success or not result.captions:
-                logging.warning(f"AI caption generation failed: {result.error}")
-                logging.info("Falling back to speech mode...")
-                
-                # Fallback to speech mode
+                # Get video duration
+                import subprocess
+                import re
+                ffprobe_cmd = [
+                    "ffprobe", "-v", "error", 
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    str(video_path)
+                ]
                 try:
-                    srt_path = transcribe_audio(video_path, srt_path)
-                except Exception as e:
-                    logging.error(f"Speech fallback also failed: {e}")
-                    return None
+                    duration = float(subprocess.check_output(ffprobe_cmd).decode().strip())
+                except:
+                    duration = 30.0
+                
+                # Split narration into sentences
+                sentences = re.split(r'(?<=[.!?])\s+', story_narration.strip())
+                sentences = [s.strip() for s in sentences if s.strip()]
+                
+                if not sentences:
+                    sentences = [story_narration]
+                
+                # For story mode: Generate TTS FIRST to get actual durations
+                # Then create SRT based on actual audio timing
+                from tts_generator import is_tts_enabled, QwenTTS, TTSConfig, generate_voice_description
+                
+                if is_tts_enabled():
+                    import gc
+                    import torch
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    logging.info("GPU memory cleared before TTS loading")
+                    
+                    try:
+                        tts_config = TTSConfig.from_env()
+                        tts = QwenTTS(tts_config)
+                        
+                        # Load the model explicitly
+                        tts._ensure_initialized()
+                        
+                        # Get voice description for story mode
+                        voice_desc = generate_voice_description(detected_category or caption_style)
+                        
+                        # Generate TTS for each sentence and measure duration
+                        sentence_durations = []
+                        for sentence in sentences:
+                            # Generate TTS
+                            wavs, sr = tts._model.generate_voice_design(
+                                text=sentence,
+                                instruct=voice_desc,
+                                language=tts.config.get_language_name(),
+                            )
+                            
+                            if wavs and len(wavs) > 0:
+                                audio_duration = len(wavs[0]) / sr
+                                sentence_durations.append(audio_duration)
+                            else:
+                                # Fallback to word-count estimate
+                                word_count = len(sentence.split())
+                                sentence_durations.append(max(1.5, word_count * 0.4))
+                        
+                        # Now create SRT with ACTUAL TTS durations
+                        result_captions = []
+                        current_time = 0.5  # Small buffer
+                        
+                        # Split long sentences into smaller visual chunks specifically for story mode
+                        # This prevents the "wall of text" issue in PyCaps
+                        MAX_WORDS_PER_CAPTION = 7
+                        
+                        for sentence, tts_duration in zip(sentences, sentence_durations):
+                            words = sentence.split()
+                            if not words:
+                                continue
+                                
+                            # If sentence is short enough, keep as one
+                            if len(words) <= MAX_WORDS_PER_CAPTION:
+                                end_time = current_time + tts_duration
+                                result_captions.append(Caption(
+                                    start_time=current_time,
+                                    end_time=end_time,
+                                    text=sentence,
+                                    style="narrative"
+                                ))
+                                current_time = end_time
+                            else:
+                                # Split into chunks
+                                chunks = []
+                                for i in range(0, len(words), MAX_WORDS_PER_CAPTION):
+                                    chunk_words = words[i:i + MAX_WORDS_PER_CAPTION]
+                                    chunks.append(" ".join(chunk_words))
+                                
+                                # Distribute duration proportionally
+                                total_chars = len(sentence)
+                                chunk_start = current_time
+                                
+                                for i, chunk in enumerate(chunks):
+                                    # Calculate duration based on character count ratio
+                                    # (characters correlate better with speaking time than word count)
+                                    chunk_ratio = len(chunk) / total_chars if total_chars > 0 else 1.0
+                                    chunk_dur = tts_duration * chunk_ratio
+                                    
+                                    # For the last chunk, ensure we essentially align with the end
+                                    # (floating point fix)
+                                    chunk_end = chunk_start + chunk_dur
+                                    if i == len(chunks) - 1:
+                                        chunk_end = current_time + tts_duration
+                                        
+                                    result_captions.append(Caption(
+                                        start_time=chunk_start,
+                                        end_time=chunk_end,
+                                        text=chunk,
+                                        style="narrative"
+                                    ))
+                                    chunk_start = chunk_end
+                                
+                                # Update current_time for the next sentence
+                                current_time = current_time + tts_duration
+                        
+                        # Clean up TTS model
+                        del tts
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        
+                    except Exception as e:
+                        logging.warning(f"TTS pre-generation failed, falling back to word-count estimate: {e}")
+                        # Fallback to original word-count based timing
+                        total_words = sum(len(s.split()) for s in sentences)
+                        result_captions = []
+                        current_time = 0.5
+                        
+                        # Split into chunks logic for fallback
+                        MAX_WORDS_PER_CAPTION = 7
+                        
+                        for sentence in sentences:
+                            # Calculate TOTAL duration for this sentence
+                            word_count = len(sentence.split())
+                            if total_words > 0:
+                                proportion = word_count / total_words
+                                total_segment_duration = max(1.5, (duration - 1.0) * proportion)
+                            else:
+                                total_segment_duration = max(1.5, word_count * 0.4)
+                            
+                            words = sentence.split()
+                            if not words: continue
+
+                            if len(words) <= MAX_WORDS_PER_CAPTION:
+                                end_time = min(current_time + total_segment_duration, duration - 0.5)
+                                result_captions.append(Caption(
+                                    start_time=current_time,
+                                    end_time=end_time,
+                                    text=sentence,
+                                    style="narrative"
+                                ))
+                                current_time = end_time
+                            else:
+                                # Chunk logic
+                                chunks = []
+                                for i in range(0, len(words), MAX_WORDS_PER_CAPTION):
+                                    chunk_words = words[i:i + MAX_WORDS_PER_CAPTION]
+                                    chunks.append(" ".join(chunk_words))
+                                
+                                total_chars = len(sentence)
+                                chunk_start = current_time
+                                
+                                for i, chunk in enumerate(chunks):
+                                    chunk_ratio = len(chunk) / total_chars if total_chars > 0 else 1.0
+                                    chunk_dur = total_segment_duration * chunk_ratio
+                                    
+                                    # Alignment fix for last chunk
+                                    if i == len(chunks) - 1:
+                                        overall_end_time = min(current_time + total_segment_duration, duration - 0.5)
+                                        chunk_end = overall_end_time
+                                    else:
+                                         chunk_end = chunk_start + chunk_dur
+                                    
+                                    result_captions.append(Caption(
+                                        start_time=chunk_start,
+                                        end_time=chunk_end,
+                                        text=chunk,
+                                        style="narrative"
+                                    ))
+                                    chunk_start = chunk_end
+                                
+                                current_time = chunk_start
+                else:
+                    # No TTS - use word-count estimate
+                    total_words = sum(len(s.split()) for s in sentences)
+                    result_captions = []
+                    current_time = 0.5
+                    
+                    # Split into chunks logic for No-TTS mode
+                    MAX_WORDS_PER_CAPTION = 7
+                    
+                    for sentence in sentences:
+                        # Calculate TOTAL duration for this sentence
+                        word_count = len(sentence.split())
+                        if total_words > 0:
+                            proportion = word_count / total_words
+                            total_segment_duration = max(1.5, (duration - 1.0) * proportion)
+                        else:
+                            total_segment_duration = max(1.5, word_count * 0.4)
+                        
+                        words = sentence.split()
+                        if not words: continue
+
+                        if len(words) <= MAX_WORDS_PER_CAPTION:
+                            end_time = min(current_time + total_segment_duration, duration - 0.5)
+                            result_captions.append(Caption(
+                                start_time=current_time,
+                                end_time=end_time,
+                                text=sentence,
+                                style="narrative"
+                            ))
+                            current_time = end_time
+                        else:
+                            # Chunk logic
+                            chunks = []
+                            for i in range(0, len(words), MAX_WORDS_PER_CAPTION):
+                                chunk_words = words[i:i + MAX_WORDS_PER_CAPTION]
+                                chunks.append(" ".join(chunk_words))
+                            
+                            total_chars = len(sentence)
+                            chunk_start = current_time
+                            
+                            for i, chunk in enumerate(chunks):
+                                chunk_ratio = len(chunk) / total_chars if total_chars > 0 else 1.0
+                                chunk_dur = total_segment_duration * chunk_ratio
+                                
+                                # Alignment fix for last chunk
+                                if i == len(chunks) - 1:
+                                    overall_end_time = min(current_time + total_segment_duration, duration - 0.5)
+                                    chunk_end = overall_end_time
+                                else:
+                                     chunk_end = chunk_start + chunk_dur
+                                
+                                result_captions.append(Caption(
+                                    start_time=chunk_start,
+                                    end_time=chunk_end,
+                                    text=chunk,
+                                    style="narrative"
+                                ))
+                                chunk_start = chunk_end
+                            
+                            current_time = chunk_start
+                
+                # Save SRT
+                captions_to_srt(result_captions, srt_path)
+                logging.info(f"Generated {len(result_captions)} story narration segments ({caption_style} style)")
+                
             else:
-                # Enhance captions with AI-powered emojis and tagging
-                category = detected_category or style
+                # Regular AI caption generation
+                logging.info("Using AI caption generation mode")
                 
-                # 1. Generate tags and emojis
-                tag_results = batch_tag_captions(result.captions, category=category)
+                # Calculate dynamic max_captions based on video duration
+                max_captions_env = int(os.getenv("MAX_CAPTIONS", "8"))
                 
-                # 2. Add emojis to text
-                add_emojis = os.getenv("ENABLE_CAPTION_EMOJIS", "true").lower() in ("true", "1", "yes")
-                enhanced_captions = []
-                for cap in result.captions:
-                    tag_res = tag_results.get(cap.text)
-                    if tag_res and add_emojis:
-                        new_text = add_emojis_to_caption(cap.text, tag_res)
-                        enhanced_captions.append(Caption(cap.start_time, cap.end_time, new_text, cap.style))
+                # Get video duration
+                import subprocess
+                import json
+                try:
+                    probe_cmd = [
+                        "ffprobe", "-v", "quiet", "-print_format", "json",
+                        "-show_format", str(video_path)
+                    ]
+                    probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+                    probe_data = json.loads(probe_result.stdout)
+                    duration = float(probe_data["format"]["duration"])
+                    
+                    # Dynamic caption count: ~1 caption per 2-4 seconds (varies by style)
+                    # Story modes: 1 caption per 10-15 seconds
+                    # Regular modes: 1 caption per 2-3 seconds
+                    is_story_mode = caption_style.startswith("story_")
+                    
+                    if is_story_mode:
+                        # Story modes: longer narration, fewer captions
+                        ideal_captions = max(2, int(duration / 12))  # 1 caption per ~12 seconds
                     else:
-                        enhanced_captions.append(cap)
+                        # Regular modes: shorter punchy captions
+                        ideal_captions = max(2, int(duration / 2.5))  # 1 caption per ~2.5 seconds
+                    
+                    # Cap at configured maximum
+                    max_captions = min(ideal_captions, max_captions_env)
+                    
+                    logging.info(f"Dynamic caption count: {max_captions} captions for {duration:.1f}s video "
+                               f"(~{duration/max_captions:.1f}s per caption)")
+                    
+                except Exception as e:
+                    # Fallback to env variable if duration detection fails
+                    logging.warning(f"Could not determine video duration: {e}")
+                    max_captions = max_captions_env
                 
-                # 3. Generate PyCaps Tagging Data
-                highlight_color = config.highlight_color or "#00ff88"
-                tag_css, word_lists = apply_tags_to_pycaps(result.captions, tag_results, highlight_color)
+                result = generate_ai_captions(video_path, style=caption_style, max_captions=max_captions)
                 
-                # Convert enhanced AI captions to SRT
-                captions_to_srt(enhanced_captions, srt_path)
-                logging.info(f"Generated {len(enhanced_captions)} AI captions ({style} style)")
+                if not result.success or not result.captions:
+                    logging.warning(f"AI caption generation failed: {result.error}")
+                    logging.info("Falling back to speech mode...")
+                    
+                    # Fallback to speech mode
+                    try:
+                        srt_path = transcribe_audio(video_path, srt_path)
+                    except Exception as e:
+                        logging.error(f"Speech fallback also failed: {e}")
+                        return None
+                else:
+                    # Enhance captions with AI-powered emojis and tagging
+                    category = detected_category or caption_style
+                    
+                    # 1. Generate tags and emojis
+                    tag_results = batch_tag_captions(result.captions, category=category)
+                    
+                    # 2. Add emojis to text
+                    add_emojis = os.getenv("ENABLE_CAPTION_EMOJIS", "true").lower() in ("true", "1", "yes")
+                    enhanced_captions = []
+                    for cap in result.captions:
+                        tag_res = tag_results.get(cap.text)
+                        if tag_res and add_emojis:
+                            new_text = add_emojis_to_caption(cap.text, tag_res)
+                            enhanced_captions.append(Caption(cap.start_time, cap.end_time, new_text, cap.style))
+                        else:
+                            enhanced_captions.append(cap)
+                    
+                    # 3. Generate PyCaps Tagging Data
+                    highlight_color = config.highlight_color or "#00ff88"
+                    tag_css, word_lists = apply_tags_to_pycaps(result.captions, tag_results, highlight_color)
+                    
+                    # Convert enhanced AI captions to SRT
+                    captions_to_srt(enhanced_captions, srt_path)
+                    logging.info(f"Generated {len(enhanced_captions)} AI captions ({caption_style} style)")
         else:
             logging.warning(f"Unknown subtitle mode: {mode}. Using ai_captions.")
             return generate_subtitles(video_path, output_path, detected_category)
@@ -696,7 +988,7 @@ def generate_subtitles(
         
         # --- TTS Voiceover (Optional) ---
         try:
-            from tts_generator import is_tts_enabled, ChatterBoxTTS, TTSConfig, mix_audio_with_video
+            from tts_generator import is_tts_enabled, QwenTTS, TTSConfig, mix_audio_with_video
             
             if is_tts_enabled():
                 logging.info("Generating TTS voiceover...")
@@ -709,7 +1001,7 @@ def generate_subtitles(
                         voiceover_path = Path(tmp_audio.name)
                     
                     # === MEMORY CLEANUP BEFORE TTS ===
-                    # ChatterBox TTS requires ~4-6GB VRAM. Clear any cached tensors
+                    # Qwen3-TTS requires ~4-6GB VRAM. Clear any cached tensors
                     # from PyCaps/Playwright/video processing before loading.
                     import gc
                     gc.collect()
@@ -725,11 +1017,12 @@ def generate_subtitles(
                     # === END MEMORY CLEANUP ===
                     
                     # Generate per-caption TTS with timing alignment
-                    tts = ChatterBoxTTS.get_instance()
+                    tts = QwenTTS.get_instance()
                     result_audio = tts.generate_for_captions(
                         captions,
                         voiceover_path,
-                        detected_category=detected_category or "action"
+                        detected_category=detected_category or "action",
+                        caption_style=caption_style  # Pass caption style for voice selection
                     )
                     
                     if result_audio and result_audio.exists():

@@ -6,9 +6,13 @@ BIN_DIR = bin
 OS_NAME = $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME = $(shell uname -m)
 
+# FlashAttention wheel URLs (torch 2.10 + CUDA 12.8)
+# See https://github.com/mjun0812/flash-attention-prebuild-wheels for other versions
+FLASH_ATTN_WHEEL_CP310 = https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.12/flash_attn-2.6.3+cu128torch2.10-cp310-cp310-linux_x86_64.whl
+FLASH_ATTN_WHEEL_CP311 = https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.12/flash_attn-2.6.3+cu128torch2.10-cp311-cp311-linux_x86_64.whl
+FLASH_ATTN_WHEEL_CP312 = https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.12/flash_attn-2.6.3+cu128torch2.10-cp312-cp312-linux_x86_64.whl
+
 # Detect Mamba/Conda
-# If conda is in path, use it. Otherwise use local micromamba.
-# We use ./$(VENV_DIR) to ensure it is treated as a local path.
 ifneq ($(shell which conda),)
     MAMBA_EXE = conda
     MAMBA_CMD = env update --prefix ./$(VENV_DIR) --file environment.yml --prune
@@ -17,11 +21,10 @@ else ifneq ($(shell which micromamba),)
     MAMBA_CMD = create -y -p ./$(VENV_DIR) -f environment.yml
 else
     MAMBA_EXE = ./$(BIN_DIR)/micromamba
-    # We use 'create' which works for new envs (and typically handles updates/existing gracefully or we can check)
     MAMBA_CMD = create -y -p ./$(VENV_DIR) -f environment.yml
 endif
 
-# Use absolute paths for Python/Pip to avoid issues when cd-ing into subdirs
+# Use absolute paths for Python/Pip
 PYTHON = $(shell pwd)/$(VENV_DIR)/bin/python
 PIP = $(shell pwd)/$(VENV_DIR)/bin/pip
 DECORD_REPO = https://github.com/dmlc/decord
@@ -54,7 +57,6 @@ $(VENV_DIR): setup_mamba environment.yml requirements.txt
 NV_CODEC_HEADERS_DIR = _build_nv_codec_headers
 
 # Install NV Codec Headers (Required for Decord + CUDA)
-# Since conda doesn't provide them easily, we build them into the environment manually.
 install_nv_codec_headers:
 	@echo "Cloning NV Codec Headers..."
 	rm -rf $(NV_CODEC_HEADERS_DIR)
@@ -75,7 +77,6 @@ install_decord: $(VENV_DIR) install_nv_codec_headers
 	
 	@echo "Building Decord Shared Library..."
 	mkdir -p $(DECORD_BUILD_DIR)/build
-	# CMAKE_PREFIX_PATH ensures we find ffmpeg/nv-codec-headers in our .venv
 	cd $(DECORD_BUILD_DIR)/build && cmake .. \
 		-DUSE_CUDA=ON \
 		-DCMAKE_BUILD_TYPE=Release \
@@ -93,24 +94,88 @@ install_decord: $(VENV_DIR) install_nv_codec_headers
 	@echo "Cleaning up..."
 	rm -rf $(DECORD_BUILD_DIR)
 
+# Install PyTorch with CUDA 12.6 support
+install_torch: $(VENV_DIR)
+	@echo "Installing PyTorch 2.10 with CUDA 12.6..."
+	$(PIP) install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+	@echo "Installing torchcodec for torchaudio video support..."
+	$(PIP) install torchcodec
+
+# Install FlashAttention 2 from prebuilt wheel
+install_flash_attn: $(VENV_DIR)
+	@echo "Installing FlashAttention 2 (prebuilt wheel for torch 2.10)..."
+	@PYVER=$$($(PYTHON) -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')"); \
+	echo "Detected Python version: $$PYVER"; \
+	if [ "$$PYVER" = "cp310" ]; then \
+		$(PIP) install $(FLASH_ATTN_WHEEL_CP310); \
+	elif [ "$$PYVER" = "cp311" ]; then \
+		$(PIP) install $(FLASH_ATTN_WHEEL_CP311); \
+	elif [ "$$PYVER" = "cp312" ]; then \
+		$(PIP) install $(FLASH_ATTN_WHEEL_CP312); \
+	else \
+		echo "Warning: No prebuilt flash-attn wheel for Python $$PYVER"; \
+		echo "Attempting to build from source (this may take a while)..."; \
+		MAX_JOBS=4 $(PIP) install flash-attn --no-build-isolation; \
+	fi
+	@echo "Verifying FlashAttention installation..."
+	$(PYTHON) -c "import flash_attn; print(f'FlashAttention {flash_attn.__version__} installed successfully')"
+
 # Install pip requirements (from requirements.txt)
 install_pip_requirements: $(VENV_DIR)
 	@echo "Installing pip requirements..."
 	$(PIP) install -r requirements.txt
 
-# Install steps 
-install: $(VENV_DIR) install_pip_requirements install_decord
+# Download TTS model for offline use
+download_tts_model: $(VENV_DIR)
+	@echo "Downloading Qwen3-TTS VoiceDesign model..."
+	$(PYTHON) -c "from src.tts_generator import download_model; download_model()"
+
+# Install system dependencies (requires sudo)
+install_system_deps:
+	@echo "Installing system dependencies..."
+	@if command -v pacman >/dev/null 2>&1; then \
+		sudo pacman -S --noconfirm sox ffmpeg; \
+	elif command -v apt-get >/dev/null 2>&1; then \
+		sudo apt-get update && sudo apt-get install -y sox ffmpeg; \
+	elif command -v dnf >/dev/null 2>&1; then \
+		sudo dnf install -y sox ffmpeg; \
+	else \
+		echo "Please install sox and ffmpeg manually for your distribution"; \
+	fi
+
+# Full install (all components)
+install: $(VENV_DIR) install_torch install_pip_requirements install_flash_attn install_decord
 	@echo "----------------------------------------------------------------"
 	@echo "Installation complete!"
+	@echo ""
 	@echo "To activate the environment:"
 	@echo "  overlay use .venv/bin/activate.nu    # Nushell"
 	@echo "  source .venv/bin/activate            # Bash/Zsh"
 	@echo ""
+	@echo "Optional: Download TTS model for offline use:"
+	@echo "  make download_tts_model"
+	@echo ""
 	@echo "To run AutoShorts:"
 	@echo "  python run.py"
+	@echo ""
+	@echo "To run the dashboard:"
+	@echo "  ./bin/dashboard"
 	@echo "----------------------------------------------------------------"
+
+# Quick install (skip decord build - use if you have decord already)
+install_quick: $(VENV_DIR) install_torch install_pip_requirements install_flash_attn
+	@echo "Quick installation complete (without Decord build)"
+
+# TTS-only install (for adding TTS to existing setup)
+install_tts: install_torch install_pip_requirements install_flash_attn download_tts_model
+	@echo "TTS installation complete with FlashAttention 2"
 
 clean:
 	rm -rf $(VENV_DIR)
 	rm -rf $(DECORD_BUILD_DIR)
 	rm -rf $(BIN_DIR)
+
+.PHONY: all install install_quick install_tts install_torch install_flash_attn install_pip_requirements install_decord install_nv_codec_headers install_system_deps download_tts_model setup_mamba clean dashboard
+
+dashboard:
+	bash ./bin/dashboard

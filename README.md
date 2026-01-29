@@ -27,26 +27,44 @@ Here are some shorts automatically generated from gameplay footage:
 ### 🎯 AI-Powered Scene Analysis
 
 - **Multi-Provider Support**: Choose between **OpenAI** (GPT-5-mini, GPT-4o) or **Google Gemini** for scene analysis
-- **Semantic Analysis Modes**:
-  - `action` — Focus on intense combat/action moments
-  - `funny` — Detect fail compilations and humorous moments  
-  - `highlight` — Find memorable achievements and clutch plays
-  - `mixed` — Auto-detect the best category for each clip (recommended)
+- **7 Semantic Types** (all analyzed automatically):
+  - `action` — Combat, kills, intense gameplay, close calls
+  - `funny` — Fails, glitches, unexpected humor, comedic timing
+  - `clutch` — 1vX situations, comebacks, last-second wins
+  - `wtf` — Unexpected events, "wait what?" moments, random chaos
+  - `epic_fail` — Embarrassing deaths, tragic blunders, game-losing mistakes
+  - `hype` — Celebrations, "LET'S GO" energy, peak excitement
+  - `skill` — Trick shots, IQ plays, advanced mechanics, impressive techniques
 
 ### 🎙️ Subtitle Generation
 
 - **Speech Mode**: Uses OpenAI Whisper to transcribe voice/commentary
 - **AI Captions Mode**: AI-generated contextual captions for gameplay without voice
-- **Caption Styles**: `gaming`, `dramatic`, `funny`, `minimal`, or `auto`
+- **Caption Styles**: 
+  - Classic: `gaming`, `dramatic`, `funny`, `minimal`
+  - **GenZ Mode** ✨: `genz` - Slang-heavy reactions ("bruh 💀", "no cap", "finna")
+  - **Story Modes** ✨: Narrative-style captions
+    - `story_news` - Professional esports broadcaster
+    - `story_roast` - Sarcastic roasting commentary
+    - `story_creepypasta` - Horror/tension narrative
+    - `story_dramatic` - Epic cinematic narration
+  - `auto` - Auto-match style to detected semantic type
 - **PyCaps Integration**: Multiple visual templates including `hype`, `retro-gaming`, `neo-minimal`
 - **AI Enhancement**: Semantic tagging and emoji suggestions (e.g., "HEADSHOT! 💀🔥")
 
-### 🔊 AI Voiceover (ChatterBox TTS)
+### 🔊 AI Voiceover (Qwen3-TTS)
 
-- **Local TTS Generation**: No cloud API needed for voice synthesis
-- **Emotion Control**: Adjustable emotion/exaggeration levels for English
-- **Multilingual Support**: 20+ languages including Japanese, Korean, Chinese, Spanish, French, and more
-- **Voice Cloning**: Optional reference audio for custom voice styles
+- **Voice Design Engine**: Powered by **Qwen3-TTS 1.7B-VoiceDesign** for creating unique voices from natural language descriptions
+- **Dynamic Voice Generation**: AI automatically generates voice persona based on caption style + caption content
+- **Style-Adaptive Voices**: Each caption style has a unique voice preset:
+  - GenZ → Casual energetic voice with modern slang
+  - Story News → Professional broadcaster
+  - Story Roast → Sarcastic playful narrator
+  - Story Creepypasta → Deep ominous voice with tension
+  - Story Dramatic → Epic movie-trailer narrator
+- **Natural Language Instructions**: Define voice characteristics via text prompts without needing reference audio
+- **Ultra-Low Latency**: Local inference with FlashAttention 2 optimization
+- **Multilingual Support**: Native support for 10+ languages including English, Chinese, Japanese, Korean
 - **Smart Mixing**: Automatic ducking of game audio when voiceover plays
 
 ### ⚡ GPU-Accelerated Pipeline
@@ -73,7 +91,7 @@ AutoShorts is designed to work even when optimal components fail:
 | **Video Encoding** | NVENC (GPU) | libx264 (CPU) |
 | **Subtitle Rendering** | PyCaps (styled) | FFmpeg burn-in (basic) |
 | **AI Analysis** | OpenAI/Gemini API | Heuristic scoring (local) |
-| **TTS Device** | CUDA (GPU) | CPU inference |
+| **TTS Device** | GPU (6GB+ VRAM) | CPU Fallback (slower) |
 
 ---
 
@@ -81,8 +99,8 @@ AutoShorts is designed to work even when optimal components fail:
 
 ### Hardware
 
-- **NVIDIA GPU** with CUDA support (RTX series recommended for NVENC + TTS)
-- **NVIDIA Drivers** compatible with CUDA 12.x
+- **NVIDIA GPU** with CUDA support (6GB+ VRAM recommended for Qwen3-TTS 1.7B)
+- **NVIDIA Drivers** and **System RAM** (16GB+ recommended)
 
 ### Software
 
@@ -157,15 +175,17 @@ cp .env.example .env
 | | `AI_ANALYSIS_ENABLED` | Enable/disable AI scene analysis |
 | | `OPENAI_MODEL` | Model for analysis (e.g., `gpt-5-mini`) |
 | | `AI_SCORE_WEIGHT` | How much to weight AI vs heuristic (0.0-1.0) |
-| **Semantic Analysis** | `SEMANTIC_GOAL` | `action`, `funny`, `highlight`, or `mixed` |
+| **Semantic Analysis** | `SEMANTIC_TYPES` | All 7 types analyzed: `action`, `funny`, `clutch`, `wtf`, `epic_fail`, `hype`, `skill` |
 | | `CANDIDATE_CLIP_COUNT` | Number of clips to analyze |
 | **Subtitles** | `ENABLE_SUBTITLES` | Enable subtitle generation |
 | | `SUBTITLE_MODE` | `speech` (Whisper), `ai_captions`, or `none` |
-| | `CAPTION_STYLE` | `gaming`, `dramatic`, `funny`, `minimal`, `auto` |
+| | `CAPTION_STYLE` | `gaming`, `dramatic`, `funny`, `minimal`, `genz`, `story_news`, `story_roast`, `story_creepypasta`, `story_dramatic`, `auto` |
 | | `PYCAPS_TEMPLATE` | Visual template for captions |
-| **TTS Voiceover** | `ENABLE_TTS` | Enable ChatterBox voiceover |
-| | `TTS_LANGUAGE` | Language code (e.g., `en`, `ja`, `es`) |
-| | `TTS_EMOTION_LEVEL` | Emotion intensity or `auto` |
+| **TTS Voiceover** | `ENABLE_TTS` | Enable Qwen3-TTS voiceover |
+| | `TTS_LANGUAGE` | Language code (`en`, `zh`, `ja`, `ko`, `de`, `fr`, `ru`, `pt`, `es`, `it`) |
+| | `TTS_VOICE_DESCRIPTION` | Natural language voice description (auto-generated if empty) |
+| | `TTS_GAME_AUDIO_VOLUME` | Game audio volume when TTS plays (0.0-1.0, default 0.3) |
+| | `TTS_VOICEOVER_VOLUME` | TTS voiceover volume (0.0-1.0, default 1.0) |
 | **Video Output** | `TARGET_RATIO_W/H` | Aspect ratio (default 9:16) |
 | | `SCENE_LIMIT` | Max clips per source video |
 | | `MIN/MAX_SHORT_LENGTH` | Clip duration bounds (seconds) |
@@ -184,6 +204,14 @@ See `.env.example` for the complete list with detailed descriptions.
    ```
 
 3. **Generated clips** are saved to `generated/`
+
+### 🧭 Dashboard (Streamlit UI)
+
+Launch the local dashboard to configure settings, start jobs, and preview clips:
+
+```bash
+streamlit run src/dashboard/app.py
+```
 
 ### Output Structure
 

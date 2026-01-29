@@ -1,3 +1,4 @@
+# Core Dependencies
 cupy-cuda12x>=13.0.0
 moviepy==2.2.1
 numpy<2.0.0
@@ -7,8 +8,12 @@ python-dotenv==1.2.1
 random2==1.0.2
 soundfile==0.13.1
 tqdm
- #removed - install manually
-# torch/torchaudio removed - they are built into the image
+
+# PyTorch - Install separately with CUDA support:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+# Requires: torch>=2.10.0 with CUDA 12.6+
+# Also install torchcodec for torchaudio video support:
+#   pip install torchcodec
 
 # AI Providers
 google-genai>=1.0.0
@@ -19,6 +24,17 @@ openai-whisper
 pycaps[all] @ git+https://github.com/francozanardi/pycaps.git
 nest_asyncio>=1.6.0  # Fix Playwright async/sync conflict
 
-# TTS Voiceover
-chatterbox-tts
+# TTS Voiceover (Qwen3-TTS VoiceDesign)
+qwen-tts
 
+# Dashboard UI
+streamlit>=1.40.0
+plotly>=5.0.0
+watchdog>=3.0.0
+
+# FlashAttention 2 - Install prebuilt wheel for your torch version:
+#   For torch 2.10 + CUDA 12.x (Python 3.10):
+#   pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.12/flash_attn-2.6.3+cu128torch2.10-cp310-cp310-linux_x86_64.whl
+#
+#   For other versions, see: https://github.com/mjun0812/flash-attention-prebuild-wheels
+#   Or build from source: MAX_JOBS=4 pip install flash-attn --no-build-isolation

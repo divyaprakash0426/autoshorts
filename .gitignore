@@ -25,5 +25,7 @@ _build_*/
 gameplay/
 generated/*
 !generated/showcase/
+CHALLENGE_SUBMISSION.md
 demo/
 assets/*.wav
+assets/*.png

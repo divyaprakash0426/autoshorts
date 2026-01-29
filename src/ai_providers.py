@@ -29,13 +29,249 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 class ClipScore:
     """Represents a scored video clip with semantic analysis."""
     
+    # Semantic types for clip classification
+    SEMANTIC_TYPES = {
+        "action": "Combat, kills, intense gameplay, close calls",
+        "funny": "Fails, glitches, unexpected humor, comedic timing",
+        "clutch": "1vX situations, comebacks, last-second wins",
+        "wtf": "Unexpected events, 'wait what?' moments, random chaos",
+        "epic_fail": "Embarrassing deaths, tragic blunders, game-losing mistakes",
+        "hype": "Celebrations, 'LET'S GO' energy, peak excitement",
+        "skill": "Trick shots, IQ plays, advanced mechanics, impressive techniques",
+    }
+    
+    # Map semantic types to caption styles
+    CAPTION_STYLE_MAP = {
+        "action": "gaming",
+        "funny": "funny",
+        "clutch": "dramatic",
+        "wtf": "funny",
+        "epic_fail": "funny",
+        "hype": "gaming",
+        "skill": "dramatic",
+    }
+    
+    # Map semantic types to TTS voice presets (fallback)
+    VOICE_PRESET_MAP = {
+        "action": """gender: Male.
+pitch: Mid-range male pitch with sharp upward inflections during exciting moments.
+speed: Very fast-paced, rapid-fire delivery matching gaming action.
+volume: Loud and projecting, nearly shouting during intense plays.
+age: Young adult, 20s to early 30s.
+clarity: Highly articulate, every word distinct even at speed.
+fluency: Extremely fluent with no hesitations, continuous flow.
+accent: American English, neutral.
+texture: Bright, energetic vocal quality with slight rasp.
+emotion: Intense excitement, hype, constant enthusiasm.
+tone: Upbeat, authoritative, commanding attention.
+personality: Confident, extroverted, engaging, competitive edge.""",
+        
+        "funny": """gender: Male.
+pitch: Mid to slightly high male pitch with playful variations.
+speed: Moderate pace with deliberate pauses for comedic timing.
+volume: Conversational, occasionally louder for punchlines.
+age: Young adult, early to mid 20s.
+clarity: Clear but relaxed, not overly precise.
+fluency: Fluent with intentional hesitations for humor, occasional 'uh', 'like'.
+accent: American English, casual GenZ cadence.
+texture: Smooth, light vocal quality with natural warmth.
+emotion: Amused, ironic, playfully sarcastic.
+tone: Laid-back, chill, slightly deadpan with smirk energy.
+personality: Witty, self-aware, relatable, gently mocking.""",
+        
+        "clutch": """gender: Male.
+pitch: Starting low and tense, building to high excited peaks.
+speed: Starts slow and deliberate, accelerates rapidly to explosive climax.
+volume: Begins quiet, builds to shouting, dramatic crescendo.
+age: Middle-aged adult, 30s to 40s.
+clarity: Crystal clear pronunciation, every syllable emphasized.
+fluency: Perfect fluency with strategic pauses for dramatic tension.
+accent: American English, sports broadcaster style.
+texture: Rich, resonant voice with powerful projection.
+emotion: Building anticipation transitioning to explosive celebration.
+tone: Dramatic, tense, then triumphant and victorious.
+personality: Professional yet passionate, masterful tension-builder.""",
+        
+        "wtf": """gender: Male.
+pitch: Erratic pitch with sudden jumps and confused inflections.
+speed: Irregular pacing, speeding up in disbelief, pausing in confusion.
+volume: Moderate with sudden loud outbursts of surprise.
+age: Young adult, mid 20s.
+clarity: Clear but broken by genuine bewilderment.
+fluency: Interrupted flow, hesitations, stammering from shock.
+accent: American English, casual conversational.
+texture: Light texture with air of disbelief.
+emotion: Confused, bewildered, amused by absurdity.
+tone: 'Wait what?', questioning everything, perplexed.
+personality: Reactive, expressive, openly confused but entertained.""",
+        
+        "epic_fail": """gender: Male.
+pitch: Mid-range descending to low defeated tones.
+speed: Slow, heavy delivery with resigned sighs.
+volume: Starts normal, drops to quiet disappointment.
+age: Young adult to middle-aged, late 20s to 30s.
+clarity: Very clear, articulating the tragedy dramatically.
+fluency: Smooth but with emotional pauses and sighs.
+accent: American English, neutral.
+texture: Warm but tinged with sympathetic sadness.
+emotion: Disappointed, sympathetic, comedically tragic.
+tone: Dramatic despair mixed with humor, mock-serious.
+personality: Empathetic, understanding, finding humor in failure.""",
+        
+        "hype": """gender: Male.
+pitch: High energy male pitch, constantly elevated and excited.
+speed: Extremely fast, breathless with adrenaline.
+volume: Maximum volume, full-throated yelling and celebration.
+age: Young adult, early 20s.
+clarity: Surprisingly clear despite shouting intensity.
+fluency: Non-stop flow, words tumbling out in excitement.
+accent: American English, urban hype energy.
+texture: Raw, unfiltered energy with slight hoarseness.
+emotion: Pure unbridled excitement, celebration, joy.
+tone: 'LET'S GOOO', maximalist hype, infectious energy.
+personality: Extroverted to the extreme, contagiously enthusiastic.""",
+        
+        "skill": """gender: Male.
+pitch: Low to mid-range, stable and controlled.
+speed: Measured, deliberate pace allowing appreciation.
+volume: Clear and projected, professional level.
+age: Middle-aged adult, 35 to 45.
+clarity: Impeccable articulation, refined speech.
+fluency: Flawless flow, sophisticated vocabulary.
+accent: British English, educated and polished.
+texture: Smooth, cultured vocal quality with depth.
+emotion: Impressed, appreciative, respectful admiration.
+tone: Analytical yet enthusiastic, thoughtful praise.
+personality: Intelligent, observant, genuine appreciation for craft.""",
+    }
+    
+    # Map caption styles to TTS voice presets (for direct style selection)
+    CAPTION_STYLE_VOICE_MAP = {
+        "gaming": """gender: Male.
+pitch: Mid-range male pitch with sharp upward inflections during exciting moments.
+speed: Very fast-paced, rapid-fire delivery matching gaming action.
+volume: Loud and projecting, nearly shouting during intense plays.
+age: Young adult, 20s to early 30s.
+clarity: Highly articulate, every word distinct even at speed.
+fluency: Extremely fluent with no hesitations, continuous flow.
+accent: American English, neutral.
+texture: Bright, energetic vocal quality with slight rasp.
+emotion: Intense excitement, hype, constant enthusiasm.
+tone: Upbeat, authoritative, commanding attention.
+personality: Confident, extroverted, engaging, competitive edge.""",
+        
+        "dramatic": """gender: Male.
+pitch: Deep, resonant bass with powerful projection.
+speed: Slow, deliberate pacing with strategic pauses for impact.
+volume: Loud, commanding presence filling the space.
+age: Mature adult, 40s to 50s.
+clarity: Perfect diction, every word pronounced with gravitas.
+fluency: Flawless delivery with cinematic timing.
+accent: American English, neutral broadcast quality.
+texture: Rich, velvety depth with cinematic warmth.
+emotion: Inspiring, epic, grandiose.
+tone: Heroic, momentous, like narrating legends.
+personality: Authoritative, wise, larger-than-life presence.""",
+        
+        "funny": """gender: Male.
+pitch: Mid to slightly high male pitch with playful variations.
+speed: Moderate pace with deliberate pauses for comedic timing.
+volume: Conversational, occasionally louder for punchlines.
+age: Young adult, early to mid 20s.
+clarity: Clear but relaxed, not overly precise.
+fluency: Fluent with intentional hesitations for humor, occasional 'uh', 'like'.
+accent: American English, casual GenZ cadence.
+texture: Smooth, light vocal quality with natural warmth.
+emotion: Amused, ironic, playfully sarcastic.
+tone: Laid-back, chill, slightly deadpan with smirk energy.
+personality: Witty, self-aware, relatable, gently mocking.""",
+        
+        "minimal": """gender: Male.
+pitch: Low, steady pitch with minimal variation.
+speed: Slow to moderate, unhurried and calm.
+volume: Quiet to moderate, intimate and close.
+age: Young to middle-aged adult, 25 to 35.
+clarity: Clear but understated, effortless articulation.
+fluency: Smooth and easy, natural flow.
+accent: American English, neutral and unassuming.
+texture: Soft, gentle vocal quality without harshness.
+emotion: Calm, composed, subtly confident.
+tone: Understated, reserved, quiet assurance.
+personality: Introverted, thoughtful, self-contained.""",
+        
+        "genz": """gender: Male or Female (androgynous lean).
+pitch: Mid-range with frequent upward inflections and vocal fry.
+speed: Fast with casual slurring, modern speech patterns.
+volume: Moderate, conversational social media energy.
+age: Late teens to early 20s, Gen Z demographic.
+clarity: Casual clarity, some words blend together naturally.
+fluency: Very fluent but with filler words, 'literally', 'like', 'bruh'.
+accent: American English, internet-influenced speech.
+texture: Bright, youthful, slightly nasal quality.
+emotion: Ironic detachment mixed with genuine enthusiasm.
+tone: Casual, meme-aware, chronically online vibes.
+personality: Self-aware, ironic, effortlessly cool, relatable chaos.""",
+        
+        "story_news": """gender: Female.
+pitch: Mid-range female pitch, professional and steady.
+speed: Moderate, measured pace with precise timing.
+volume: Clear, projected, broadcast-quality loudness.
+age: Middle-aged adult, 35 to 45.
+clarity: Impeccable enunciation, television-standard precision.
+fluency: Flawless professional delivery, no hesitations.
+accent: American English, neutral broadcast accent.
+texture: Polished, refined vocal quality with authority.
+emotion: Objective, serious, professionally engaged.
+tone: Journalistic, factual, trustworthy authority.
+personality: Professional, composed, credible, commanding respect.""",
+        
+        "story_roast": """gender: Male.
+pitch: Mid to high pitch with sarcastic inflections and exaggerated tones.
+speed: Variable, speeding up for punchlines, slowing for emphasis.
+volume: Moderate to loud, performative and theatrical.
+age: Young adult, mid to late 20s.
+clarity: Very clear, ensuring every barb lands perfectly.
+fluency: Smooth with comedic pauses and timing.
+accent: American English, comedy podcast energy.
+texture: Bright with playful edge, slight smirk audible.
+emotion: Amused mockery, playful cruelty, entertained.
+tone: Sarcastic, teasing, roast-comedy style.
+personality: Quick-witted, sharp-tongued, charismatic instigator.""",
+        
+        "story_creepypasta": """gender: Male.
+pitch: Deep, low pitch with minimal variation, ominous undertones.
+speed: Very slow, deliberate, each word drawn out for tension.
+volume: Quiet to moderate, intimate and unsettling closeness.
+age: Middle-aged to older adult, 40s to 50s.
+clarity: Crystal clear whisper-level articulation.
+fluency: Controlled, methodical pacing building dread.
+accent: American English, neutral with slight rasp.
+texture: Dark, gravelly with shadowy depth.
+emotion: Foreboding, sinister, building unease.
+tone: Ominous, creeping horror, inevitable dread.
+personality: Mysterious, unsettling, knows something you don't.""",
+        
+        "story_dramatic": """gender: Male.
+pitch: Deep, resonant bass with powerful projection.
+speed: Slow, deliberate pacing with strategic pauses for impact.
+volume: Loud, commanding presence filling the space.
+age: Mature adult, 40s to 50s.
+clarity: Perfect diction, every word pronounced with gravitas.
+fluency: Flawless delivery with cinematic timing.
+accent: American English, neutral broadcast quality.
+texture: Rich, velvety depth with cinematic warmth.
+emotion: Inspiring, epic, grandiose.
+tone: Heroic, momentous, like narrating legends.
+personality: Authoritative, wise, larger-than-life presence.""",
+    }
+    
     clip_path: Path
     original_start: float  # Start time in the original video
     original_end: float    # End time in the original video
     ai_score: float = 0.0  # Semantic score from AI (0-1)
     reason: str = ""       # Why this clip was selected
     heuristic_score: float = 0.0  # Original heuristic score
-    detected_category: str = ""   # Detected category: "action", "funny", "highlight"
+    detected_category: str = ""   # Detected category (one of SEMANTIC_TYPES keys)
     category_scores: dict = None  # Scores per category: {"action": 0.8, "funny": 0.3, ...}
     
     def __post_init__(self):
@@ -51,12 +287,12 @@ class ClipScore:
     @property
     def caption_style(self) -> str:
         """Get the appropriate caption style based on detected category."""
-        style_map = {
-            "action": "gaming",
-            "funny": "funny",
-            "highlight": "dramatic",
-        }
-        return style_map.get(self.detected_category, "gaming")
+        return self.CAPTION_STYLE_MAP.get(self.detected_category, "gaming")
+    
+    @property
+    def voice_preset(self) -> str:
+        """Get the fallback voice preset based on detected category."""
+        return self.VOICE_PRESET_MAP.get(self.detected_category, self.VOICE_PRESET_MAP["action"])
 
 
 
@@ -119,12 +355,12 @@ class GeminiAnalyzer(SemanticAnalyzer):
     def analyze_clips(
         self, 
         clip_infos: List[ClipScore], 
-        goal: str = "action"
+        goal: str = "mixed"
     ) -> AnalysisResult:
         """Analyze clips using Gemini's video understanding.
         
-        If goal is "mixed", scores each clip for action, funny, and highlight
-        categories and picks the best one.
+        Always analyzes all semantic types and returns the best match.
+        The goal parameter is ignored (kept for API compatibility).
         """
         
         if not self.is_available():
@@ -132,13 +368,13 @@ class GeminiAnalyzer(SemanticAnalyzer):
             return AnalysisResult(clips=clip_infos, provider="gemini", raw_response="")
         
         client = self._get_client()
-        is_mixed = goal.lower() == "mixed"
         
-        goal_prompts = {
-            "action": "intense action moments, exciting gameplay, skillful plays, or dramatic events",
-            "funny": "funny moments, fails, unexpected events, comedic timing, or humorous situations",
-            "highlight": "memorable highlights, impressive achievements, or shareable moments"
-        }
+        # Build category descriptions from ClipScore
+        categories_desc = "\n".join(
+            f"{i+1}. {cat.upper()} - {desc}"
+            for i, (cat, desc) in enumerate(ClipScore.SEMANTIC_TYPES.items())
+        )
+        categories_json = ", ".join(f'"{cat}": 0.5' for cat in ClipScore.SEMANTIC_TYPES.keys())
         
         results = []
         
@@ -149,46 +385,25 @@ class GeminiAnalyzer(SemanticAnalyzer):
                 logging.info(f"Analyzing clip: {clip_info.clip_path.name}")
                 client = self._get_client()
 
-                # Upload the video file (Gemini handles uploads per request or reuse? For simplicity upload/delete per request)
-                # Note: Parallel uploads might hit limits.
                 with open(clip_info.clip_path, "rb") as f:
                     video_file = client.files.upload(
                         file=f,
                         config={"mime_type": "video/mp4"}
                     )
                 
-                # Reconstruct prompt locally
-                if is_mixed:
-                    prompt = """Analyze this video clip and rate it for THREE categories.
+                prompt = f"""Analyze this video clip and rate it for ALL categories.
 
 CATEGORIES:
-1. ACTION - intense moments, exciting gameplay, skillful plays, combat, close calls
-2. FUNNY - fails, unexpected events, comedic timing, humorous situations, glitches
-3. HIGHLIGHT - impressive achievements, memorable moments, shareable content
+{categories_desc}
 
 Respond with ONLY valid JSON:
-{"action": 0.85, "funny": 0.3, "highlight": 0.6, "best_category": "action", "reason": "Why this clip is best for the selected category"}
+{{{categories_json}, "best_category": "action", "reason": "Why this clip fits the selected category"}}
 
 Scoring guide (per category):
 - 0.0-0.3: Not relevant
 - 0.4-0.6: Somewhat relevant
 - 0.7-0.8: Good match
 - 0.9-1.0: Exceptional
-"""
-                else:
-                    goal_desc = goal_prompts.get(goal, goal_prompts["action"])
-                    prompt = f"""Analyze this video clip for {goal_desc}.
-
-Rate this clip on a scale of 0.0 to 1.0 based on how well it matches the goal.
-
-Respond with ONLY valid JSON in this exact format:
-{{"score": 0.85, "reason": "Brief explanation of why this clip scored this way"}}
-
-Be strict in your scoring:
-- 0.0-0.3: Not relevant to the goal
-- 0.4-0.6: Somewhat relevant but not standout
-- 0.7-0.8: Good content matching the goal
-- 0.9-1.0: Exceptional content, highly shareable
 """
                 
                 response = client.models.generate_content(
@@ -206,22 +421,17 @@ Be strict in your scoring:
                     
                     data = json.loads(response_text)
                     
-                    if is_mixed:
-                        clip_info.category_scores = {
-                            "action": float(data.get("action", 0.5)),
-                            "funny": float(data.get("funny", 0.5)),
-                            "highlight": float(data.get("highlight", 0.5)),
-                        }
-                        best_cat = data.get("best_category", "").lower()
-                        if best_cat not in clip_info.category_scores:
-                            best_cat = max(clip_info.category_scores, key=clip_info.category_scores.get)
-                        clip_info.detected_category = best_cat
-                        clip_info.ai_score = clip_info.category_scores[best_cat]
-                        clip_info.reason = data.get("reason", "")
-                    else:
-                        clip_info.ai_score = float(data.get("score", 0.5))
-                        clip_info.reason = data.get("reason", "")
-                        clip_info.detected_category = goal
+                    # Parse scores for all semantic types
+                    clip_info.category_scores = {
+                        cat: float(data.get(cat, 0.5))
+                        for cat in ClipScore.SEMANTIC_TYPES.keys()
+                    }
+                    best_cat = data.get("best_category", "").lower()
+                    if best_cat not in clip_info.category_scores:
+                        best_cat = max(clip_info.category_scores, key=clip_info.category_scores.get)
+                    clip_info.detected_category = best_cat
+                    clip_info.ai_score = clip_info.category_scores[best_cat]
+                    clip_info.reason = data.get("reason", "")
                         
                 except json.JSONDecodeError:
                     logging.warning(f"Failed to parse Gemini response: {response_text[:100]}")
@@ -317,12 +527,12 @@ class OpenAIAnalyzer(SemanticAnalyzer):
     def analyze_clips(
         self, 
         clip_infos: List[ClipScore], 
-        goal: str = "action"
+        goal: str = "mixed"
     ) -> AnalysisResult:
         """Analyze clips using OpenAI's vision API.
         
-        If goal is "mixed", scores each clip for action, funny, and highlight
-        categories and picks the best one.
+        Always analyzes all semantic types and returns the best match.
+        The goal parameter is ignored (kept for API compatibility).
         """
         
         if not self.is_available():
@@ -330,13 +540,13 @@ class OpenAIAnalyzer(SemanticAnalyzer):
             return AnalysisResult(clips=clip_infos, provider="openai", raw_response="")
         
         client = self._get_client()
-        is_mixed = goal.lower() == "mixed"
         
-        goal_prompts = {
-            "action": "intense action moments, exciting gameplay, skillful plays, or dramatic events",
-            "funny": "funny moments, fails, unexpected events, comedic timing, or humorous situations",
-            "highlight": "memorable highlights, impressive achievements, or shareable moments"
-        }
+        # Build category descriptions from ClipScore
+        categories_desc = "\n".join(
+            f"{i+1}. {cat.upper()} - {desc}"
+            for i, (cat, desc) in enumerate(ClipScore.SEMANTIC_TYPES.items())
+        )
+        categories_json = ", ".join(f'"{cat}": 0.5' for cat in ClipScore.SEMANTIC_TYPES.keys())
         
         results = []
         
@@ -357,38 +567,19 @@ class OpenAIAnalyzer(SemanticAnalyzer):
                     clip_info.detected_category = "action"
                     return clip_info
                 
-                # Use same prompt logic as before...
-                # Note: We need to reconstruct the prompt inside the thread or pass it
-                if is_mixed:
-                    prompt_text = """These are keyframes from a video clip. Analyze them for THREE categories.
+                prompt_text = f"""These are keyframes from a video clip. Analyze them for ALL categories.
 
 CATEGORIES:
-1. ACTION - intense moments, exciting gameplay, skillful plays, combat, close calls
-2. FUNNY - fails, unexpected events, comedic timing, humorous situations, glitches
-3. HIGHLIGHT - impressive achievements, memorable moments, shareable content
+{categories_desc}
 
 Respond with ONLY valid JSON:
-{"action": 0.85, "funny": 0.3, "highlight": 0.6, "best_category": "action", "reason": "Why this clip is best for the selected category"}
+{{{categories_json}, "best_category": "action", "reason": "Why this clip fits the selected category"}}
 
 Scoring guide (per category):
 - 0.0-0.3: Not relevant
 - 0.4-0.6: Somewhat relevant
 - 0.7-0.8: Good match
 - 0.9-1.0: Exceptional"""
-                else:
-                    goal_desc = goal_prompts.get(goal, goal_prompts["action"])
-                    prompt_text = f"""These are keyframes from a video clip. Analyze them for {goal_desc}.
-
-Rate this clip on a scale of 0.0 to 1.0 based on how well it matches the goal.
-
-Respond with ONLY valid JSON in this exact format:
-{{"score": 0.85, "reason": "Brief explanation of why this clip scored this way"}}
-
-Be strict in your scoring:
-- 0.0-0.3: Not relevant to the goal
-- 0.4-0.6: Somewhat relevant but not standout
-- 0.7-0.8: Good content matching the goal
-- 0.9-1.0: Exceptional content, highly shareable"""
                 
                 # Build message with images
                 content = [{"type": "text", "text": prompt_text}]
@@ -405,7 +596,7 @@ Be strict in your scoring:
                 response = client.chat.completions.create(
                     model=self.model_name,
                     messages=[{"role": "user", "content": content}],
-                    max_completion_tokens=2000,  # Increased for gpt-5-mini
+                    max_completion_tokens=2000,
                     response_format={"type": "json_object"}
                 )
                 
@@ -419,22 +610,17 @@ Be strict in your scoring:
                     
                     data = json.loads(response_text)
                     
-                    if is_mixed:
-                        clip_info.category_scores = {
-                            "action": float(data.get("action", 0.5)),
-                            "funny": float(data.get("funny", 0.5)),
-                            "highlight": float(data.get("highlight", 0.5)),
-                        }
-                        best_cat = data.get("best_category", "").lower()
-                        if best_cat not in clip_info.category_scores:
-                            best_cat = max(clip_info.category_scores, key=clip_info.category_scores.get)
-                        clip_info.detected_category = best_cat
-                        clip_info.ai_score = clip_info.category_scores[best_cat]
-                        clip_info.reason = data.get("reason", "")
-                    else:
-                        clip_info.ai_score = float(data.get("score", 0.5))
-                        clip_info.reason = data.get("reason", "")
-                        clip_info.detected_category = goal
+                    # Parse scores for all semantic types
+                    clip_info.category_scores = {
+                        cat: float(data.get(cat, 0.5))
+                        for cat in ClipScore.SEMANTIC_TYPES.keys()
+                    }
+                    best_cat = data.get("best_category", "").lower()
+                    if best_cat not in clip_info.category_scores:
+                        best_cat = max(clip_info.category_scores, key=clip_info.category_scores.get)
+                    clip_info.detected_category = best_cat
+                    clip_info.ai_score = clip_info.category_scores[best_cat]
+                    clip_info.reason = data.get("reason", "")
                         
                 except json.JSONDecodeError:
                     logging.warning(f"Failed to parse OpenAI response: {response_text[:100]}")
@@ -658,6 +844,11 @@ def generate_ai_captions(
 def _get_caption_prompt(style: str, max_captions: int, duration: float) -> str:
     """Generate the prompt for AI caption generation."""
     
+    # Story modes use fewer but longer captions
+    is_story_mode = style.startswith("story_")
+    if is_story_mode:
+        max_captions = min(max_captions, 4)  # Cap at 4 for story modes
+    
     style_guides = {
         "gaming": """Generate short, punchy captions like gaming content creators use.
 Examples: "HEADSHOT!", "clutch play incoming...", "wait for it...", "GG EZ", "POV: you're cracked"
@@ -673,12 +864,37 @@ Be self-aware and slightly chaotic. Gen-Z humor welcome.""",
         
         "minimal": """Generate minimal, understated captions.
 Examples: "nice.", "oh.", "well then."
-Keep it subtle. Less is more. Max 3 words per caption."""
+Keep it subtle. Less is more. Max 3 words per caption.""",
+        
+        "genz": """Generate GenZ slang-heavy reactions and commentary.
+Examples: "bruh 💀", "no cap this is insane", "he's locked in rn", "finna go crazy", "ate and left no crumbs"
+Use modern slang naturally: bruh, no cap, finna, fr fr, ate, slay, lowkey, highkey, bussin, mid, L, W, rizz
+Keep captions 1-6 words. Be authentic to GenZ internet culture. Emojis encouraged (💀🔥😭).""",
+        
+        "story_news": """Generate professional esports broadcaster narrative.
+Examples: "And we're witnessing championship-level gameplay here.", "The positioning is absolutely impeccable.", "This could be the defining moment of the match."
+Write 2-3 sentences per caption. Professional tone, clear analysis, building excitement. Fewer captions (2-4 max) with longer text.""",
+        
+        "story_roast": """Generate sarcastic, playful roasting commentary.
+Examples: "Oh no. Oh no no no.", "Someone's definitely uninstalling after this.", "The audacity. The absolute audacity of this play."
+Write 2-3 sentences per caption. Sarcastic but not mean, comedic timing, playful mockery. Fewer captions (2-4 max).""",
+        
+        "story_creepypasta": """Generate horror-style tension narrative.
+Examples: "Something felt wrong.", "The game knew what was about to happen.", "And then... it did."
+Write 2-3 sentences per caption. Build tension, ominous tone, slow reveals. Fewer captions (2-4 max). Use ellipses for suspense.""",
+        
+        "story_dramatic": """Generate epic cinematic narration.
+Examples: "In the arena of champions, legends are born.", "The crowd holds its breath.", "One shot. One chance. Immortality awaits."
+Write 2-3 sentences per caption. Epic tone, powerful delivery, movie trailer style. Fewer captions (2-4 max)."""
     }
     
     style_guide = style_guides.get(style, style_guides["gaming"])
     
-    return f"""Watch this gameplay video and generate {max_captions} short captions for key moments.
+    # Adjust caption duration guidance for story modes
+    caption_duration = "4-8 seconds" if is_story_mode else "1-3 seconds"
+    caption_type = "narrative segments" if is_story_mode else "short captions"
+    
+    return f"""Watch this gameplay video and generate {max_captions} {caption_type} for key moments.
 
 STYLE GUIDE:
 {style_guide}
@@ -687,7 +903,7 @@ VIDEO DURATION: {duration:.1f} seconds
 
 RULES:
 1. Space captions throughout the video (not all at the start)
-2. Each caption should appear for 1-3 seconds
+2. Each caption should appear for {caption_duration}
 3. Focus on action moments, close calls, achievements, or funny situations
 4. Captions should enhance the viewing experience, not describe obvious actions
 
@@ -827,10 +1043,19 @@ def _generate_captions_openai(
                 }
             })
         
+        # Calculate appropriate max_tokens based on video length and style
+        # Story modes need more tokens (2-3 sentences vs 1-5 words)
+        is_story_mode = style.startswith("story_")
+        base_tokens = 500 if is_story_mode else 300  # Tokens per caption
+        max_output_tokens = min(base_tokens * max_captions + 500, 8000)  # +500 for JSON overhead
+        
+        logging.debug(f"OpenAI caption generation: {len(frames)} frames, {max_captions} captions, "
+                     f"max_tokens={max_output_tokens} ({'story' if is_story_mode else 'standard'} mode)")
+        
         response = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": content}],
-            max_completion_tokens=2000,
+            max_completion_tokens=max_output_tokens,
             response_format={"type": "json_object"}
         )
         

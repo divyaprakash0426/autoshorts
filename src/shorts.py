@@ -711,8 +711,8 @@ def compute_audio_action_profile(
     # We do NOT move the full waveform to GPU.
     try:
         waveform, sample_rate = torchaudio.load(str(video_path), normalize=True)
-    except Exception:
-        logging.error(f"Failed to load audio from {video_path}")
+    except Exception as e:
+        logging.error(f"Failed to load audio from {video_path}: {e}")
         return np.array([]), np.array([])
     
     # Mix to mono if necessary (remains on CPU)
@@ -1556,17 +1556,134 @@ def split_overlong_scenes(combined_scene_list: List[List], config: ProcessingCon
     return result
 
 
-def _get_ai_config() -> Tuple[bool, int, int, str]:
+def calculate_dynamic_candidate_count(
+    num_scenes: int,
+    video_duration: float,
+    target_output_count: int,
+) -> int:
+    """Calculate optimal number of candidate clips for AI analysis.
+    
+    The system intelligently determines how many clips to analyze based on:
+    - Target output count (SCENE_LIMIT)
+    - Total available scenes
+    - Video duration (longer videos = more analysis)
+    
+    Strategy:
+    - Base: 3-5x target output count (ensures good selection pool)
+    - Scale with video duration (longer videos need more candidates)
+    - Cap at 50% of available scenes (avoid analyzing everything)
+    - Minimum: 2x target output (always have choices)
+    - Maximum: 50 clips (API cost control)
+    
+    Args:
+        num_scenes: Total number of scenes detected
+        video_duration: Video duration in seconds
+        target_output_count: Number of final clips desired (SCENE_LIMIT)
+        
+    Returns:
+        Optimal candidate count
+    """
+    # Base multiplier: 4x target output (good diversity)
+    base_count = target_output_count * 4
+    
+    # Duration scaling: +5 candidates per 30 minutes
+    # - 10 min video: +1 candidates
+    # - 30 min video: +5 candidates
+    # - 60 min video: +10 candidates
+    # - 90 min video: +15 candidates
+    duration_minutes = video_duration / 60
+    duration_bonus = int((duration_minutes / 30) * 5)
+    
+    # Calculate candidate count
+    candidate_count = base_count + duration_bonus
+    
+    # Apply constraints
+    min_candidates = max(target_output_count * 2, 10)  # At least 2x output, min 10
+    max_candidates = 50  # API cost cap
+    max_from_scenes = int(num_scenes * 0.5)  # Don't analyze more than 50% of scenes
+    
+    # Clamp to valid range
+    candidate_count = max(min_candidates, min(candidate_count, max_candidates, max_from_scenes))
+    
+    # Log the decision
+    logging.info(
+        f"Dynamic candidate selection: {candidate_count} clips "
+        f"(video: {duration_minutes:.1f}min, scenes: {num_scenes}, target: {target_output_count})"
+    )
+    
+    return candidate_count
+
+
+def calculate_dynamic_short_lengths(
+    video_duration: float,
+    scene_limit: int,
+) -> Tuple[int, int, int]:
+    """Calculate optimal short clip lengths based on source video duration and scene count.
+    
+    Longer source videos can afford longer, more developed clips.
+    More scenes = each clip should be shorter to maintain quality/variety.
+    
+    Args:
+        video_duration: Video duration in seconds
+        scene_limit: Number of output clips desired (SCENE_LIMIT)
+        
+    Returns:
+        Tuple of (min_short_length, max_short_length, max_combined_scene_length)
+    """
+    duration_minutes = video_duration / 60
+    
+    # Calculate available time per output clip
+    available_per_clip = video_duration / scene_limit
+    
+    # Base lengths from video duration
+    if duration_minutes < 5:
+        base_min, base_max = 10, 45
+    elif duration_minutes < 15:
+        base_min, base_max = 12, 60
+    elif duration_minutes < 30:
+        base_min, base_max = 15, 90
+    elif duration_minutes < 60:
+        base_min, base_max = 18, 120
+    else:
+        base_min, base_max = 20, 179
+    
+    # max_combined scales with available time per clip
+    # Target: ~30-50% of available time per clip (leave room for scene selection)
+    # But capped between 90s and 300s
+    max_combined = int(available_per_clip * 0.4)
+    max_combined = max(90, min(max_combined, 300))
+    
+    # Adjust max_short if max_combined is small
+    # max_short shouldn't exceed max_combined
+    max_short = min(base_max, max_combined)
+    
+    # Ensure min < max
+    min_short = min(base_min, max_short - 5)
+    
+    logging.info(
+        f"Dynamic short lengths: min={min_short}s, max={max_short}s, combined={max_combined}s "
+        f"(video: {duration_minutes:.1f}min, scene_limit: {scene_limit}, "
+        f"available_per_clip: {available_per_clip:.0f}s)"
+    )
+    
+    return min_short, max_short, max_combined
+
+
+def _get_ai_config() -> Tuple[bool, int, int]:
     """Get AI analysis configuration from environment.
     
     Returns:
-        Tuple of (enabled, candidate_count, clip_duration, goal)
+        Tuple of (enabled, candidate_count, clip_duration)
+        
+    Note: candidate_count is now deprecated - use calculate_dynamic_candidate_count() instead
     """
     enabled = os.getenv("AI_ANALYSIS_ENABLED", "true").lower() in ("true", "1", "yes")
-    candidate_count = int(os.getenv("CANDIDATE_CLIP_COUNT", "30"))
+    
+    # DEPRECATED: Keep for backward compatibility, but prefer dynamic calculation
+    candidate_count = int(os.getenv("CANDIDATE_CLIP_COUNT", "0"))
+    
     clip_duration = int(os.getenv("CANDIDATE_CLIP_DURATION", "120"))
-    goal = os.getenv("SEMANTIC_GOAL", "action")
-    return enabled, candidate_count, clip_duration, goal
+    return enabled, candidate_count, clip_duration
 
 
 def rank_scenes_with_ai(
@@ -1578,14 +1695,13 @@ def rank_scenes_with_ai(
     video_score: np.ndarray,
     candidate_count: int = 30,
     clip_duration: int = 120,
-    goal: str = "action",
 ) -> List[Tuple[List, float, str]]:
     """Rank scenes using AI semantic analysis.
     
     This function:
     1. Pre-filters scenes by heuristic score to get top candidates
     2. Extracts short clips for each candidate
-    3. Sends clips to AI for semantic analysis
+    3. Sends clips to AI for semantic analysis (all 7 semantic types)
     4. Returns scenes ranked by combined score
     
     Args:
@@ -1595,10 +1711,9 @@ def rank_scenes_with_ai(
         video_times, video_score: Video action profile
         candidate_count: Number of top candidates to send to AI
         clip_duration: Duration of each candidate clip (seconds)
-        goal: Semantic analysis goal
         
     Returns:
-        List of (scene, combined_score, reason) tuples, sorted by score
+        List of (scene, combined_score, detected_category) tuples, sorted by score
     """
     # Step 1: Compute heuristic scores and pre-filter
     scene_scores = []
@@ -1699,10 +1814,10 @@ def rank_scenes_with_ai(
             logging.warning("No clips extracted for AI analysis. Using heuristic ranking.")
             return [(s, score, "Heuristic only") for s, score in scene_scores]
         
-        # Step 3: Run AI analysis
-        logging.info(f"Running AI semantic analysis ({goal})...")
+        # Step 3: Run AI analysis (analyzes all 7 semantic types)
+        logging.info("Running AI semantic analysis (all types)...")
         analyzer = get_analyzer()
-        result = analyzer.analyze_clips(clip_infos, goal=goal)
+        result = analyzer.analyze_clips(clip_infos)
         
         logging.info(f"AI analysis complete (provider: {result.provider})")
         
@@ -1823,6 +1938,22 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
     
     if not goto_rendering:
         logging.info("\nProcess: %s", video_file.name)
+        
+        # Get video duration FIRST for auto-config (before scene processing)
+        try:
+            vr_probe = VideoReader(str(video_file), ctx=cpu(0))
+            video_duration = len(vr_probe) / vr_probe.get_avg_fps()
+            del vr_probe
+            gc.collect()  # Ensure file handle is released
+        except Exception:
+            logging.warning("Decord probe failed, using MoviePy to check duration.")
+            from moviepy import VideoFileClip
+            video_clip = VideoFileClip(str(video_file))
+            video_duration = video_clip.duration
+            video_clip.close()
+        
+        # Update config with auto-calculated lengths BEFORE scene processing
+        config = update_config_with_auto_lengths(config, video_duration)
 
         # Unified Video Analysis (Single Pass)
         logging.info("Analyzing video content (Scenes & Action) [GPU]...")
@@ -1889,7 +2020,22 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
             )
 
         # --- AI-ASSISTED RANKING ---
-        ai_enabled, candidate_count, clip_duration, goal = _get_ai_config()
+        ai_enabled, candidate_count_env, clip_duration = _get_ai_config()
+        
+        # video_duration already calculated at start of this block
+        
+        # Calculate dynamic candidate count (or use env override if set)
+        if candidate_count_env > 0:
+            # User explicitly set CANDIDATE_CLIP_COUNT - use that
+            candidate_count = candidate_count_env
+            logging.info(f"Using user-specified candidate count: {candidate_count}")
+        else:
+            # Dynamic calculation based on video characteristics
+            candidate_count = calculate_dynamic_candidate_count(
+                num_scenes=len(processed_scene_list),
+                video_duration=video_duration,
+                target_output_count=config.scene_limit,
+            )
         
         # Track detected categories for each scene (for subtitle style matching)
         scene_categories: dict = {}  # scene_start -> detected_category
@@ -1906,7 +2052,6 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
                 video_score,
                 candidate_count=candidate_count,
                 clip_duration=clip_duration,
-                goal=goal,
             )
     else:
         # Using checkpoint data - need to reconstruct some variables
@@ -1915,20 +2060,32 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
             key=lambda s: scene_action_score(s, audio_times, audio_score, video_times, video_score),
             reverse=True,
         )
-        ai_enabled, candidate_count, clip_duration, goal = _get_ai_config()
-
-    # We need to get video duration efficiently. Use VideoReader on CPU.
-    try:
-        vr_probe = VideoReader(str(video_file), ctx=cpu(0))
-        video_duration = len(vr_probe) / vr_probe.get_avg_fps()
-        del vr_probe
-    except Exception:
-        # Fallback to MoviePy if decord fails (legacy support)
-        logging.warning("Decord probe failed, using MoviePy to check duration.")
-        from moviepy import VideoFileClip
-        video_clip = VideoFileClip(str(video_file))
-        video_duration = video_clip.duration
-        video_clip.close()
+        ai_enabled, candidate_count_env, clip_duration = _get_ai_config()
+        
+        # Get video duration
+        try:
+            vr_probe = VideoReader(str(video_file), ctx=cpu(0))
+            video_duration = len(vr_probe) / vr_probe.get_avg_fps()
+            del vr_probe
+        except Exception:
+            logging.warning("Decord probe failed, using MoviePy to check duration.")
+            from moviepy import VideoFileClip
+            video_clip = VideoFileClip(str(video_file))
+            video_duration = video_clip.duration
+            video_clip.close()
+        
+        # Update config with auto-calculated lengths if needed (0 = auto mode)
+        config = update_config_with_auto_lengths(config, video_duration)
+        
+        # Calculate dynamic candidate count for checkpoint mode too
+        if candidate_count_env > 0:
+            candidate_count = candidate_count_env
+        else:
+            candidate_count = calculate_dynamic_candidate_count(
+                num_scenes=len(processed_scene_list),
+                video_duration=video_duration,
+                target_output_count=config.scene_limit,
+            )
 
     # --- FINAL SCENE SELECTION ---
     # Extract scenes and their categories from AI ranking
@@ -1937,34 +2094,24 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
         selected_indices = set()
         limit = config.scene_limit
         
-        # Strategy: Ensure diversity by picking at least one of each main category if available
-        # 1. Pick best Highlight
+        # Strategy: Ensure diversity by picking different semantic types
+        # With 7 types (action, funny, clutch, wtf, epic_fail, hype, skill),
+        # prioritize variety over pure score
+        
+        # Track which categories we've selected
+        selected_categories = set()
+        
+        # First pass: Pick one of each unique category (up to limit)
         for i, (scene, score, category) in enumerate(ai_ranked):
-            if category == "highlight" and i not in selected_indices:
+            if len(final_scene_list) >= limit:
+                break
+            if category not in selected_categories:
                 final_scene_list.append(scene)
                 scene_categories[scene[0].get_seconds()] = category
                 selected_indices.add(i)
-                break
+                selected_categories.add(category)
         
-        # 2. Pick best Action (if we have budget)
-        if len(final_scene_list) < limit:
-            for i, (scene, score, category) in enumerate(ai_ranked):
-                if category == "action" and i not in selected_indices:
-                    final_scene_list.append(scene)
-                    scene_categories[scene[0].get_seconds()] = category
-                    selected_indices.add(i)
-                    break
-
-        # 3. Pick best Funny (if we have budget)
-        if len(final_scene_list) < limit:
-            for i, (scene, score, category) in enumerate(ai_ranked):
-                if category == "funny" and i not in selected_indices:
-                    final_scene_list.append(scene)
-                    scene_categories[scene[0].get_seconds()] = category
-                    selected_indices.add(i)
-                    break
-
-        # 4. Fill the rest with top scorers
+        # Second pass: Fill remaining slots with highest scores
         for i, (scene, score, category) in enumerate(ai_ranked):
             if len(final_scene_list) >= limit:
                 break
@@ -1973,7 +2120,13 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
                 scene_categories[scene[0].get_seconds()] = category
                 selected_indices.add(i)
 
-        logging.info(f"Using AI-ranked top {len(final_scene_list)} scenes (Balanced Selection with Funny)")
+        # Log category distribution
+        category_counts = {}
+        for cat in selected_categories:
+            category_counts[cat] = sum(1 for _, _, c in [(ai_ranked[i][0], ai_ranked[i][1], ai_ranked[i][2]) for i in selected_indices] if c == cat)
+        
+        category_summary = ", ".join(f"{cat}: {count}" for cat, count in category_counts.items())
+        logging.info(f"Using AI-ranked top {len(final_scene_list)} scenes (Diverse Selection: {category_summary})")
     else:
         if ai_enabled:
             logging.warning("AI ranking returned no results. Using heuristic ranking.")
@@ -2086,20 +2239,70 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
     if is_subtitles_enabled() and rendered_clips:
         logging.info(f"Generating subtitles for {len(rendered_clips)} clips...")
         
-        for clip_path, detected_category in rendered_clips:
-            try:
-                subtitled_path = clip_path.with_stem(clip_path.stem + "_sub")
-                result = generate_subtitles(clip_path, subtitled_path, detected_category)
+        # Check if we're using story mode (cross-clip narration)
+        from subtitle_generator import get_subtitle_mode, get_caption_style
+        mode = get_subtitle_mode()
+        
+        if mode == "ai_captions":
+            caption_style = os.getenv("CAPTION_STYLE", "auto")
+            
+            # Story modes require cross-clip narrative generation
+            if caption_style.startswith("story_") and len(rendered_clips) > 1:
+                logging.info(f"Story mode detected: {caption_style} - generating unified narrative")
                 
-                if result and result.exists():
-                    # Replace original with subtitled version
-                    clip_path.unlink()
-                    result.rename(clip_path)
-                    logging.info(f"Subtitles added: {clip_path.name} ({detected_category} style)")
+                from story_narrator import generate_unified_story
+                
+                # Generate unified story across all clips
+                story_segments = generate_unified_story(rendered_clips, caption_style)
+                
+                if story_segments:
+                    # Apply narration to each clip
+                    for segment in story_segments:
+                        try:
+                            clip_path = segment.clip_path
+                            subtitled_path = clip_path.with_stem(clip_path.stem + "_sub")
+                            
+                            # Generate subtitles with pre-generated narration
+                            result = generate_subtitles(
+                                clip_path, 
+                                subtitled_path, 
+                                segment.detected_category,
+                                story_narration=segment.narration_text
+                            )
+                            
+                            if result and result.exists():
+                                clip_path.unlink()
+                                result.rename(clip_path)
+                                logging.info(f"Story narration added: {clip_path.name}")
+                            else:
+                                logging.warning(f"Story narration failed for: {clip_path.name}")
+                        except Exception as e:
+                            logging.error(f"Error adding story narration to {clip_path.name}: {e}")
                 else:
-                    logging.warning(f"Subtitle generation failed for: {clip_path.name}")
-            except Exception as e:
-                logging.error(f"Error adding subtitles to {clip_path.name}: {e}")
+                    logging.warning("Story generation failed, falling back to per-clip subtitles")
+                    # Fall through to regular subtitle generation
+                    caption_style = None
+            else:
+                caption_style = None  # Use regular per-clip processing
+        else:
+            caption_style = None
+        
+        # Regular per-clip subtitle generation (non-story modes or fallback)
+        if not (mode == "ai_captions" and caption_style and caption_style.startswith("story_")):
+            for clip_path, detected_category in rendered_clips:
+                try:
+                    subtitled_path = clip_path.with_stem(clip_path.stem + "_sub")
+                    result = generate_subtitles(clip_path, subtitled_path, detected_category)
+                    
+                    if result and result.exists():
+                        # Replace original with subtitled version
+                        clip_path.unlink()
+                        result.rename(clip_path)
+                        logging.info(f"Subtitles added: {clip_path.name} ({detected_category} style)")
+                    else:
+                        logging.warning(f"Subtitle generation failed for: {clip_path.name}")
+                except Exception as e:
+                    logging.error(f"Error adding subtitles to {clip_path.name}: {e}")
     
     logging.info(f"Processing complete: {len(rendered_clips)} clips generated")
 
@@ -2112,7 +2315,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def config_from_env() -> ProcessingConfig:
-    """Build ProcessingConfig from environment variables."""
+    """Build ProcessingConfig from environment variables.
+    
+    Note: If MIN_SHORT_LENGTH, MAX_SHORT_LENGTH, or MAX_COMBINED_SCENE_LENGTH
+    are set to 0 (auto), they will be calculated dynamically when video 
+    duration is known. Use update_config_with_auto_lengths() after getting video info.
+    """
     return ProcessingConfig(
         target_ratio_w=_get_env_int("TARGET_RATIO_W", 1),
         target_ratio_h=_get_env_int("TARGET_RATIO_H", 1),
@@ -2120,9 +2328,48 @@ def config_from_env() -> ProcessingConfig:
         x_center=_get_env_float("X_CENTER", 0.5),
         y_center=_get_env_float("Y_CENTER", 0.5),
         max_error_depth=_get_env_int("MAX_ERROR_DEPTH", 3),
-        min_short_length=_get_env_int("MIN_SHORT_LENGTH", 15),
-        max_short_length=_get_env_int("MAX_SHORT_LENGTH", 179),
-        max_combined_scene_length=_get_env_int("MAX_COMBINED_SCENE_LENGTH", 300),
+        min_short_length=_get_env_int("MIN_SHORT_LENGTH", 0),  # 0 = auto
+        max_short_length=_get_env_int("MAX_SHORT_LENGTH", 0),  # 0 = auto
+        max_combined_scene_length=_get_env_int("MAX_COMBINED_SCENE_LENGTH", 0),  # 0 = auto
+    )
+
+
+def update_config_with_auto_lengths(config: ProcessingConfig, video_duration: float) -> ProcessingConfig:
+    """Update config with auto-calculated short lengths if set to 0 (auto mode).
+    
+    Args:
+        config: Current ProcessingConfig
+        video_duration: Video duration in seconds
+        
+    Returns:
+        Updated ProcessingConfig with calculated lengths (or original if not auto)
+    """
+    # Check if any length is set to auto (0)
+    needs_auto = (
+        config.min_short_length == 0 or
+        config.max_short_length == 0 or
+        config.max_combined_scene_length == 0
+    )
+    
+    if not needs_auto:
+        return config
+    
+    # Calculate dynamic lengths
+    auto_min, auto_max, auto_combined = calculate_dynamic_short_lengths(
+        video_duration, config.scene_limit
+    )
+    
+    # Apply auto values only where needed (0 = auto)
+    return ProcessingConfig(
+        target_ratio_w=config.target_ratio_w,
+        target_ratio_h=config.target_ratio_h,
+        scene_limit=config.scene_limit,
+        x_center=config.x_center,
+        y_center=config.y_center,
+        max_error_depth=config.max_error_depth,
+        min_short_length=auto_min if config.min_short_length == 0 else config.min_short_length,
+        max_short_length=auto_max if config.max_short_length == 0 else config.max_short_length,
+        max_combined_scene_length=auto_combined if config.max_combined_scene_length == 0 else config.max_combined_scene_length,
     )
 
 
