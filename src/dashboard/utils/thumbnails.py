@@ -61,7 +61,16 @@ def get_video_info(video_path: Path) -> VideoInfo:
 def list_videos(folder: Path) -> List[VideoInfo]:
     if not folder.exists():
         return []
-    video_paths = [
-        path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in {".mp4", ".mkv", ".mov"}
-    ]
+    video_paths = []
+    for path in folder.iterdir():
+        # Check if it's a regular file or a symlink pointing to a file
+        if (path.is_file() or path.is_symlink()) and path.suffix.lower() in {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}:
+            # Verify symlink points to existing file
+            if path.is_symlink():
+                try:
+                    if not path.resolve().exists():
+                        continue  # Skip broken symlinks
+                except OSError:
+                    continue  # Skip inaccessible symlinks
+            video_paths.append(path)
     return [get_video_info(path) for path in sorted(video_paths)]

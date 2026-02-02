@@ -153,7 +153,6 @@ def apply_pycaps_subtitles(
     srt_path: Path,
     output_path: Path,
     config: Optional[SubtitleConfig] = None,
-    extra_css: str = "",
     word_lists: dict = None
 ) -> bool:
     """Apply animated subtitles using PyCaps (TemplateLoader API).
@@ -163,8 +162,7 @@ def apply_pycaps_subtitles(
         srt_path: Path to SRT subtitle file
         output_path: Path for output video with subtitles
         config: Subtitle styling configuration
-        extra_css: Additional CSS for tagging
-        word_lists: Dictionary of word lists for tagging
+        word_lists: Dictionary of word lists for SemanticTagger
         
     Returns:
         True if successful
@@ -182,7 +180,7 @@ def apply_pycaps_subtitles(
     ctx = multiprocessing.get_context("spawn")  # Use spawn for better compatibility
     p = ctx.Process(
         target=_run_pycaps_worker,
-        args=(str(video_path), str(srt_path), str(output_path), config, extra_css, word_lists)
+        args=(str(video_path), str(srt_path), str(output_path), config, word_lists)
     )
     p.start()
     p.join()
@@ -229,7 +227,7 @@ def _check_for_fallback_output(video_path: Path, output_path: Path) -> bool:
     return False
 
 
-def _run_pycaps_worker(video_path_str: str, srt_path_str: str, output_path_str: str, config: SubtitleConfig, extra_css: str = "", word_lists: dict = None):
+def _run_pycaps_worker(video_path_str: str, srt_path_str: str, output_path_str: str, config: SubtitleConfig, word_lists: dict = None):
     """Worker function to run PyCaps in a separate process."""
     # Re-import necessary modules in the spawned process
     import sys
@@ -383,11 +381,7 @@ def _run_pycaps_worker(video_path_str: str, srt_path_str: str, output_path_str: 
             .with_output_video(output_path_str)
         )
         
-        # Only add extra_css if AI tagging provides it (for word highlighting)
-        if extra_css and extra_css.strip():
-            builder = builder.add_css_content(extra_css)
-        
-        # Configure Semantic Tagger for AI tags
+        # Configure Semantic Tagger for AI tags (word highlighting handled by PyCaps templates)
         if word_lists:
             tagger = SemanticTagger()
             from pycaps.common import Tag
@@ -568,7 +562,8 @@ def generate_subtitles(
     video_path: Path, 
     output_path: Optional[Path] = None,
     detected_category: Optional[str] = None,
-    story_narration: Optional[str] = None
+    story_narration: Optional[str] = None,
+    render_meta: Optional[dict] = None
 ) -> Optional[Path]:
     """Full subtitle pipeline with mode selection.
     
@@ -583,6 +578,7 @@ def generate_subtitles(
         detected_category: Optional category from AI analysis ("action", "funny", "highlight")
                           Used when CAPTION_STYLE=auto to match style to content.
         story_narration: Pre-generated narration text for story modes (cross-clip narrative)
+        render_meta: Optional dict with source_path, start_time, duration, crop params for re-rendering
         
     Returns:
         Path to subtitled video, or None if subtitles are disabled/failed
@@ -603,8 +599,7 @@ def generate_subtitles(
     config = SubtitleConfig.from_env()
     srt_path = video_path.with_suffix(".srt")
     
-    # Initialize tagging data
-    tag_css = ""
+    # Initialize tagging data (word lists for PyCaps SemanticTagger)
     word_lists = {}
     
     # Determine caption style (for both ai_captions and TTS voice selection)
@@ -682,11 +677,23 @@ def generate_subtitles(
                         tts._ensure_initialized()
                         
                         # Get voice description for story mode
-                        voice_desc = generate_voice_description(detected_category or caption_style)
+                        # For story modes, caption_style takes priority over detected_category
+                        # because story modes have specific voice presets (e.g., story_dramatic = Female)
+                        voice_context = caption_style if caption_style and caption_style.startswith("story_") else (detected_category or caption_style)
+                        voice_desc = generate_voice_description(voice_context)
+                        logging.info(f"Using voice preset for: {voice_context}")
                         
-                        # Generate TTS for each sentence and measure duration
+                        # Preprocess slang in sentences for TTS
+                        from tts_generator import preprocess_text_for_tts
+                        processed_sentences = [preprocess_text_for_tts(s) for s in sentences]
+                        
+                        # Generate TTS for each sentence and SAVE the audio for later
+                        # This avoids the sync issue of generating TTS twice
                         sentence_durations = []
-                        for sentence in sentences:
+                        sentence_audio_segments = []  # Store actual audio to reuse
+                        tts_sample_rate = 24000  # Default, will be updated
+                        
+                        for sentence in processed_sentences:
                             # Generate TTS
                             wavs, sr = tts._model.generate_voice_design(
                                 text=sentence,
@@ -694,13 +701,17 @@ def generate_subtitles(
                                 language=tts.config.get_language_name(),
                             )
                             
+                            tts_sample_rate = sr
+                            
                             if wavs and len(wavs) > 0:
                                 audio_duration = len(wavs[0]) / sr
                                 sentence_durations.append(audio_duration)
+                                sentence_audio_segments.append(wavs[0])  # Save audio
                             else:
                                 # Fallback to word-count estimate
                                 word_count = len(sentence.split())
                                 sentence_durations.append(max(1.5, word_count * 0.4))
+                                sentence_audio_segments.append(None)  # No audio
                         
                         # Now create SRT with ACTUAL TTS durations
                         result_captions = []
@@ -759,7 +770,47 @@ def generate_subtitles(
                                 # Update current_time for the next sentence
                                 current_time = current_time + tts_duration
                         
-                        # Clean up TTS model
+                        # === SAVE PRE-GENERATED TTS AUDIO ===
+                        # Build the final audio from saved segments to avoid regenerating
+                        import numpy as np
+                        import scipy.io.wavfile as wav
+                        
+                        audio_parts = []
+                        audio_current_time = 0.0
+                        
+                        for i, (tts_dur, audio_seg) in enumerate(zip(sentence_durations, sentence_audio_segments)):
+                            # Calculate start time for this sentence (same logic as captions)
+                            # Sentences start at 0.5s buffer, then sequentially
+                            expected_start = 0.5 + sum(sentence_durations[:i])
+                            
+                            # Add silence gap if needed
+                            silence_needed = expected_start - audio_current_time
+                            if silence_needed > 0:
+                                silence_samples = int(silence_needed * tts_sample_rate)
+                                audio_parts.append(np.zeros(silence_samples, dtype=np.float32))
+                                audio_current_time += silence_needed
+                            
+                            # Add audio segment
+                            if audio_seg is not None:
+                                audio_parts.append(audio_seg.astype(np.float32))
+                                audio_current_time += len(audio_seg) / tts_sample_rate
+                            else:
+                                # Add silence for failed generations
+                                silence_samples = int(tts_dur * tts_sample_rate)
+                                audio_parts.append(np.zeros(silence_samples, dtype=np.float32))
+                                audio_current_time += tts_dur
+                        
+                        # Save pre-generated TTS to a temp file for later use
+                        if audio_parts:
+                            story_tts_audio = np.concatenate(audio_parts)
+                            story_tts_audio_int16 = (story_tts_audio * 32767).astype(np.int16)
+                            
+                            # Save to temp file that will be used instead of regenerating
+                            story_tts_path = srt_path.with_suffix(".story_tts.wav")
+                            wav.write(str(story_tts_path), tts_sample_rate, story_tts_audio_int16)
+                            logging.info(f"Pre-generated story TTS saved: {audio_current_time:.1f}s")
+                        
+                        # Clean up TTS model (but keep the saved audio file)
                         del tts
                         gc.collect()
                         if torch.cuda.is_available():
@@ -895,10 +946,11 @@ def generate_subtitles(
                 # Regular AI caption generation
                 logging.info("Using AI caption generation mode")
                 
-                # Calculate dynamic max_captions based on video duration
-                max_captions_env = int(os.getenv("MAX_CAPTIONS", "8"))
+                # Get configured max_captions (0 = auto/dynamic)
+                max_captions_env = int(os.getenv("MAX_CAPTIONS", "0"))
+                is_auto_captions = (max_captions_env == 0)
                 
-                # Get video duration
+                # Get video duration for dynamic calculation
                 import subprocess
                 import json
                 try:
@@ -911,27 +963,33 @@ def generate_subtitles(
                     duration = float(probe_data["format"]["duration"])
                     
                     # Dynamic caption count: ~1 caption per 2-4 seconds (varies by style)
-                    # Story modes: 1 caption per 10-15 seconds
-                    # Regular modes: 1 caption per 2-3 seconds
+                    # Story modes: 1 caption per 5-6 seconds (narrative pacing)
+                    # Regular modes: 1 caption per 2-3 seconds (punchy)
                     is_story_mode = caption_style.startswith("story_")
                     
                     if is_story_mode:
-                        # Story modes: longer narration, fewer captions
-                        ideal_captions = max(2, int(duration / 12))  # 1 caption per ~12 seconds
+                        # Story modes: narrative pacing, but not too sparse
+                        # Aim for ~1 caption per 5-6 seconds for good coverage
+                        ideal_captions = max(4, int(duration / 5.5))  # 1 caption per ~5.5 seconds
                     else:
                         # Regular modes: shorter punchy captions
                         ideal_captions = max(2, int(duration / 2.5))  # 1 caption per ~2.5 seconds
                     
-                    # Cap at configured maximum
-                    max_captions = min(ideal_captions, max_captions_env)
-                    
-                    logging.info(f"Dynamic caption count: {max_captions} captions for {duration:.1f}s video "
-                               f"(~{duration/max_captions:.1f}s per caption)")
+                    if is_auto_captions:
+                        # Auto mode: use ideal count (no cap)
+                        max_captions = ideal_captions
+                        logging.info(f"Dynamic caption count: {max_captions} captions for {duration:.1f}s video "
+                                   f"(~{duration/max_captions:.1f}s per caption)")
+                    else:
+                        # Manual mode: cap at configured maximum
+                        max_captions = min(ideal_captions, max_captions_env)
+                        logging.info(f"Dynamic caption count: {max_captions} captions for {duration:.1f}s video "
+                                   f"(~{duration/max_captions:.1f}s per caption, max={max_captions_env})")
                     
                 except Exception as e:
-                    # Fallback to env variable if duration detection fails
+                    # Fallback to env variable or default if duration detection fails
                     logging.warning(f"Could not determine video duration: {e}")
-                    max_captions = max_captions_env
+                    max_captions = max_captions_env if max_captions_env > 0 else 10
                 
                 result = generate_ai_captions(video_path, style=caption_style, max_captions=max_captions)
                 
@@ -963,24 +1021,23 @@ def generate_subtitles(
                         else:
                             enhanced_captions.append(cap)
                     
-                    # 3. Generate PyCaps Tagging Data
-                    highlight_color = config.highlight_color or "#00ff88"
-                    tag_css, word_lists = apply_tags_to_pycaps(result.captions, tag_results, highlight_color)
+                    # 3. Generate PyCaps Tagging Data (word lists only, no custom CSS)
+                    word_lists = apply_tags_to_pycaps(result.captions, tag_results)
                     
                     # Convert enhanced AI captions to SRT
                     captions_to_srt(enhanced_captions, srt_path)
                     logging.info(f"Generated {len(enhanced_captions)} AI captions ({caption_style} style)")
         else:
             logging.warning(f"Unknown subtitle mode: {mode}. Using ai_captions.")
-            return generate_subtitles(video_path, output_path, detected_category)
+            return generate_subtitles(video_path, output_path, detected_category, render_meta=render_meta)
         
         # Check if we got any subtitles
         if not srt_path.exists() or srt_path.stat().st_size == 0:
             logging.warning("No subtitles generated (empty SRT)")
             return None
         
-        # Apply subtitles using PyCaps (or FFmpeg fallback)
-        success = apply_pycaps_subtitles(video_path, srt_path, output_path, config, extra_css=tag_css, word_lists=word_lists)
+        # Apply subtitles using PyCaps
+        success = apply_pycaps_subtitles(video_path, srt_path, output_path, config, word_lists=word_lists)
         
         if not success:
             logging.error("Subtitle burn-in failed")
@@ -988,73 +1045,145 @@ def generate_subtitles(
         
         # --- TTS Voiceover (Optional) ---
         try:
-            from tts_generator import is_tts_enabled, QwenTTS, TTSConfig, mix_audio_with_video
+            from tts_generator import is_tts_enabled, QwenTTS, TTSConfig, mix_audio_with_video, RenderMeta
             
             if is_tts_enabled():
                 logging.info("Generating TTS voiceover...")
                 
-                # Parse SRT with timing for proper audio alignment
-                captions = _parse_srt_with_timing(srt_path)
+                # Check if we have pre-generated story TTS audio (from story mode)
+                # This avoids regenerating TTS which would cause sync issues
+                story_tts_path = srt_path.with_suffix(".story_tts.wav")
                 
-                if captions:
-                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
-                        voiceover_path = Path(tmp_audio.name)
+                if story_tts_path.exists():
+                    # === USE PRE-GENERATED STORY TTS ===
+                    logging.info("Using pre-generated story TTS audio (perfect sync)")
+                    voiceover_path = story_tts_path
                     
-                    # === MEMORY CLEANUP BEFORE TTS ===
-                    # Qwen3-TTS requires ~4-6GB VRAM. Clear any cached tensors
-                    # from PyCaps/Playwright/video processing before loading.
-                    import gc
-                    gc.collect()
+                    # Mix voiceover with video
+                    mixed_output = output_path.with_stem(output_path.stem + "_voiced")
                     
+                    game_vol = float(os.getenv("TTS_GAME_AUDIO_VOLUME", "0.3"))
+                    voice_vol = float(os.getenv("TTS_VOICEOVER_VOLUME", "1.0"))
+                    
+                    # Convert render_meta dict to RenderMeta dataclass if provided
+                    tts_render_meta = None
+                    if render_meta:
+                        try:
+                            tts_render_meta = RenderMeta(
+                                source_path=Path(render_meta["source_path"]),
+                                start_time=render_meta["start_time"],
+                                original_duration=render_meta["duration"],
+                                output_width=render_meta["output_width"],
+                                output_height=render_meta["output_height"],
+                                crop_x=render_meta["crop_x"],
+                                crop_y=render_meta["crop_y"],
+                                crop_w=render_meta["crop_w"],
+                                crop_h=render_meta["crop_h"],
+                                bg_width=render_meta.get("bg_width", render_meta["output_width"]),
+                                bg_height=render_meta.get("bg_height", render_meta["output_height"]),
+                                is_vertical_bg=render_meta.get("is_vertical_bg", True),
+                            )
+                        except (KeyError, TypeError) as e:
+                            logging.warning(f"Could not create RenderMeta: {e}")
+                    
+                    if mix_audio_with_video(output_path, voiceover_path, mixed_output, game_vol, voice_vol, tts_render_meta):
+                        # Replace subtitled version with voiced version
+                        output_path.unlink()
+                        mixed_output.rename(output_path)
+                        logging.info(f"TTS voiceover added successfully")
+                    else:
+                        logging.warning("TTS audio mixing failed, keeping subtitles only")
+                    
+                    # Cleanup the pre-generated TTS file
                     try:
-                        import torch
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                            torch.cuda.synchronize()
-                            logging.info("GPU memory cleared before TTS loading")
+                        story_tts_path.unlink()
                     except Exception:
                         pass
-                    # === END MEMORY CLEANUP ===
+                else:
+                    # === GENERATE TTS ON-THE-FLY (non-story modes) ===
+                    # Parse SRT with timing for proper audio alignment
+                    captions = _parse_srt_with_timing(srt_path)
                     
-                    # Generate per-caption TTS with timing alignment
-                    tts = QwenTTS.get_instance()
-                    result_audio = tts.generate_for_captions(
-                        captions,
-                        voiceover_path,
-                        detected_category=detected_category or "action",
-                        caption_style=caption_style  # Pass caption style for voice selection
-                    )
-                    
-                    if result_audio and result_audio.exists():
-                        # Mix voiceover with video
-                        mixed_output = output_path.with_stem(output_path.stem + "_voiced")
+                    if captions:
+                        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
+                            voiceover_path = Path(tmp_audio.name)
                         
-                        game_vol = float(os.getenv("TTS_GAME_AUDIO_VOLUME", "0.3"))
-                        voice_vol = float(os.getenv("TTS_VOICEOVER_VOLUME", "1.0"))
+                        # === MEMORY CLEANUP BEFORE TTS ===
+                        # Qwen3-TTS requires ~4-6GB VRAM. Clear any cached tensors
+                        # from PyCaps/Playwright/video processing before loading.
+                        import gc
+                        gc.collect()
                         
-                        if mix_audio_with_video(output_path, voiceover_path, mixed_output, game_vol, voice_vol):
-                            # Replace subtitled version with voiced version
-                            output_path.unlink()
-                            mixed_output.rename(output_path)
-                            logging.info(f"TTS voiceover added successfully")
-                        else:
-                            logging.warning("TTS audio mixing failed, keeping subtitles only")
-                    
-                    # Cleanup temp voiceover file
-                    try:
-                        voiceover_path.unlink()
-                    except Exception:
-                        pass
-                    
-                    # === CLEANUP TTS MEMORY AFTER USE ===
-                    # Free VRAM for subsequent clips
-                    try:
-                        import torch
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                    except Exception:
-                        pass
-                    # === END TTS CLEANUP ===
+                        try:
+                            import torch
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                                torch.cuda.synchronize()
+                                logging.info("GPU memory cleared before TTS loading")
+                        except Exception:
+                            pass
+                        # === END MEMORY CLEANUP ===
+                        
+                        # Generate per-caption TTS with timing alignment
+                        tts = QwenTTS.get_instance()
+                        result_audio = tts.generate_for_captions(
+                            captions,
+                            voiceover_path,
+                            detected_category=detected_category or "action",
+                            caption_style=caption_style  # Pass caption style for voice selection
+                        )
+                        
+                        if result_audio and result_audio.exists():
+                            # Mix voiceover with video
+                            mixed_output = output_path.with_stem(output_path.stem + "_voiced")
+                            
+                            game_vol = float(os.getenv("TTS_GAME_AUDIO_VOLUME", "0.3"))
+                            voice_vol = float(os.getenv("TTS_VOICEOVER_VOLUME", "1.0"))
+                            
+                            # Convert render_meta dict to RenderMeta dataclass if provided
+                            tts_render_meta = None
+                            if render_meta:
+                                try:
+                                    tts_render_meta = RenderMeta(
+                                        source_path=Path(render_meta["source_path"]),
+                                        start_time=render_meta["start_time"],
+                                        original_duration=render_meta["duration"],
+                                        output_width=render_meta["output_width"],
+                                        output_height=render_meta["output_height"],
+                                        crop_x=render_meta["crop_x"],
+                                        crop_y=render_meta["crop_y"],
+                                        crop_w=render_meta["crop_w"],
+                                        crop_h=render_meta["crop_h"],
+                                        bg_width=render_meta.get("bg_width", render_meta["output_width"]),
+                                        bg_height=render_meta.get("bg_height", render_meta["output_height"]),
+                                        is_vertical_bg=render_meta.get("is_vertical_bg", True),
+                                    )
+                                except (KeyError, TypeError) as e:
+                                    logging.warning(f"Could not create RenderMeta: {e}")
+                            
+                            if mix_audio_with_video(output_path, voiceover_path, mixed_output, game_vol, voice_vol, tts_render_meta):
+                                # Replace subtitled version with voiced version
+                                output_path.unlink()
+                                mixed_output.rename(output_path)
+                                logging.info(f"TTS voiceover added successfully")
+                            else:
+                                logging.warning("TTS audio mixing failed, keeping subtitles only")
+                        
+                        # Cleanup temp voiceover file
+                        try:
+                            voiceover_path.unlink()
+                        except Exception:
+                            pass
+                        
+                        # === CLEANUP TTS MEMORY AFTER USE ===
+                        # Free VRAM for subsequent clips
+                        try:
+                            import torch
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                        except Exception:
+                            pass
+                        # === END TTS CLEANUP ===
                     
         except ImportError:
             logging.debug("TTS module not available, skipping voiceover")

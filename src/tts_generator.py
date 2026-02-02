@@ -75,6 +75,129 @@ class TTSConfig:
         )
 
 
+# Slang/abbreviation expansions for TTS clarity
+# TTS models often can't pronounce internet slang correctly
+SLANG_EXPANSIONS = {
+    # GenZ slang
+    "fr fr": "for real for real",
+    "fr,fr": "for real for real", 
+    "fr, fr": "for real for real",
+    "frfr": "for real for real",
+    "fr": "for real",
+    "rn": "right now",
+    "ngl": "not gonna lie",
+    "idk": "I don't know",
+    "idc": "I don't care",
+    "imo": "in my opinion",
+    "imho": "in my humble opinion",
+    "tbh": "to be honest",
+    "tho": "though",
+    "thru": "through",
+    "u": "you",
+    "ur": "your",
+    "r": "are",
+    "w/": "with",
+    "w/o": "without",
+    "bc": "because",
+    "b4": "before",
+    "2day": "today",
+    "2nite": "tonight",
+    "2morrow": "tomorrow",
+    "smh": "shaking my head",
+    "omg": "oh my god",
+    "lol": "laughing out loud",
+    "lmao": "laughing my ass off",
+    "rofl": "rolling on the floor laughing",
+    "brb": "be right back",
+    "btw": "by the way",
+    "fyi": "for your information",
+    "gg": "good game",
+    "ez": "easy",
+    "pog": "play of the game",
+    "poggers": "play of the game",
+    "goat": "greatest of all time",
+    "goated": "greatest of all time",
+    "bussin": "bussin'",
+    "finna": "fixing to",
+    "gonna": "going to",
+    "wanna": "want to",
+    "gotta": "got to",
+    "kinda": "kind of",
+    "sorta": "sort of",
+    "prolly": "probably",
+    "aight": "alright",
+    "ight": "alright",
+    "yall": "y'all",
+    "ya'll": "y'all",
+    # Gaming terms
+    "1v1": "one v one",
+    "2v2": "two v two", 
+    "3v3": "three v three",
+    "5v5": "five v five",
+    "1hp": "one HP",
+    "hp": "H P",
+    "dps": "D P S",
+    "aoe": "A O E",
+    "fps": "F P S",
+    "rpg": "R P G",
+    "mmo": "M M O",
+    "pvp": "P V P",
+    "pve": "P V E",
+    "npc": "N P C",
+    "op": "O P",
+    "nerf": "nerf",
+    "buff": "buff",
+    # Punctuation that TTS might read literally
+    "...": ", ",
+    "..": ", ",
+    "--": ", ",
+    "—": ", ",
+    ",,": ",",
+}
+
+
+def preprocess_text_for_tts(text: str) -> str:
+    """Expand slang and abbreviations for better TTS pronunciation.
+    
+    Args:
+        text: Raw caption text
+        
+    Returns:
+        Text with slang expanded for TTS clarity
+    """
+    import re
+    
+    result = text
+    
+    # First, handle punctuation replacements (no word boundaries)
+    punctuation_replacements = {
+        "...": ", ",
+        "..": ", ",
+        "--": ", ",
+        "—": ", ",
+        ",,": ",",
+    }
+    for punct, replacement in punctuation_replacements.items():
+        result = result.replace(punct, replacement)
+    
+    # Sort slang by length (longest first) to avoid partial replacements
+    # e.g., "fr fr" should be replaced before "fr"
+    word_slang = {k: v for k, v in SLANG_EXPANSIONS.items() if k not in punctuation_replacements}
+    sorted_slang = sorted(word_slang.keys(), key=len, reverse=True)
+    
+    for slang in sorted_slang:
+        expansion = word_slang[slang]
+        # Case-insensitive word boundary replacement
+        # Use word boundaries to avoid replacing parts of words
+        pattern = r'\b' + re.escape(slang) + r'\b'
+        result = re.sub(pattern, expansion, result, flags=re.IGNORECASE)
+    
+    # Clean up multiple spaces
+    result = re.sub(r'\s+', ' ', result).strip()
+    
+    return result
+
+
 def generate_voice_description(context: str) -> str:
     """Get preset voice description for Qwen3-TTS VoiceDesign.
     
@@ -155,12 +278,24 @@ class QwenTTS:
                 logging.info("FlashAttention not available, using eager attention")
             
             # Load the model with proper device/dtype settings
-            self._model = Qwen3TTSModel.from_pretrained(
-                "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-                device_map=device_map,
-                dtype=dtype,
-                attn_implementation=attn_impl,
-            )
+            # Use local_files_only=True to avoid network calls when model is cached
+            try:
+                self._model = Qwen3TTSModel.from_pretrained(
+                    "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+                    device_map=device_map,
+                    dtype=dtype,
+                    attn_implementation=attn_impl,
+                    local_files_only=True,  # Use cached model, no network
+                )
+            except Exception as e:
+                # Fallback to network if local cache doesn't exist
+                logging.warning(f"Local model not found, downloading: {e}")
+                self._model = Qwen3TTSModel.from_pretrained(
+                    "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+                    device_map=device_map,
+                    dtype=dtype,
+                    attn_implementation=attn_impl,
+                )
             
             self._initialized = True
             logging.info("Qwen3-TTS model loaded successfully")
@@ -208,12 +343,15 @@ class QwenTTS:
         try:
             import scipy.io.wavfile as wav
             
-            logging.info(f"Generating TTS: {text[:50]}...")
+            # Preprocess text for TTS (expand slang, abbreviations)
+            processed_text = preprocess_text_for_tts(text)
+            
+            logging.info(f"Generating TTS: {processed_text[:50]}...")
             
             # Use generate_voice_design API
             # Returns: (wavs: List[np.ndarray], sample_rate: int)
             wavs, sr = self._model.generate_voice_design(
-                text=text,
+                text=processed_text,
                 instruct=voice_desc,
                 language=self.config.get_language_name(),
             )
@@ -291,10 +429,6 @@ class QwenTTS:
             
             logging.info(f"Generating TTS for {len(captions)} captions ({detected_category} mode)")
             
-            # Story modes: captions timed to TTS (no stretching needed)
-            # Regular modes: captions timed to visual events (stretching may be needed)
-            is_story_mode = caption_style and caption_style.startswith("story_")
-            
             for i, caption in enumerate(captions):
                 text = caption.get("text", "").strip()
                 start_time = caption.get("start", 0.0)
@@ -309,6 +443,9 @@ class QwenTTS:
                 text = re.sub(r'\*[^*]+\*', '', text).strip()
                 if not text:
                     continue
+                
+                # Expand slang/abbreviations for better TTS pronunciation
+                text = preprocess_text_for_tts(text)
                 
                 # Calculate silence needed before this caption
                 silence_duration = max(0, start_time - current_time)
@@ -333,25 +470,11 @@ class QwenTTS:
                         audio = wavs[0].astype(np.float32)
                         tts_duration = len(audio) / sample_rate
                         
-                        # Time-stretch if TTS is longer than caption window
-                        # SKIP stretching for story modes (caption duration = TTS duration by design)
-                        # Use pitch-preserving stretching (NOT resampling which causes chipmunk)
-                        if not is_story_mode and tts_duration > caption_duration and caption_duration > 0.5:
-                            stretch_ratio = tts_duration / caption_duration
-                            
-                            # Only stretch if within reasonable bounds (up to 2x speedup)
-                            # Beyond 2x speedup, audio becomes unintelligible
-                            if stretch_ratio <= 2.0:
-                                try:
-                                    import librosa
-                                    # librosa.effects.time_stretch: rate > 1 = faster
-                                    audio = librosa.effects.time_stretch(audio, rate=stretch_ratio)
-                                    new_duration = len(audio) / sample_rate
-                                    logging.debug(f"Caption {i}: stretched {tts_duration:.2f}s → {new_duration:.2f}s (target: {caption_duration:.2f}s)")
-                                except ImportError:
-                                    logging.warning("librosa not available for pitch-preserving time stretch")
-                            else:
-                                logging.warning(f"Caption {i}: TTS too long ({tts_duration:.1f}s vs {caption_duration:.1f}s), skipping stretch to preserve quality")
+                        # NOTE: Voice stretching removed - it degrades audio quality
+                        # Instead, we extend the video duration when TTS is longer
+                        # (handled in mix_audio_with_video via tpad or amix=longest)
+                        if tts_duration > caption_duration:
+                            logging.debug(f"Caption {i}: TTS ({tts_duration:.1f}s) > caption window ({caption_duration:.1f}s), video will be extended")
                         
                         audio_segments.append(audio)
                         current_time += len(audio) / sample_rate
@@ -432,14 +555,168 @@ def generate_voiceover(
     return output_path if success else None
 
 
+def get_audio_duration(audio_path: Path) -> float:
+    """Get audio duration in seconds using ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(audio_path)
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def get_video_duration(video_path: Path) -> float:
+    """Get video duration in seconds using ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(video_path)
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def extend_video_with_tpad(
+    video_path: Path,
+    output_path: Path,
+    target_duration: float,
+) -> bool:
+    """Extend video duration by freezing the last frame (tpad filter).
+    
+    Args:
+        video_path: Input video
+        output_path: Output path for extended video
+        target_duration: Target duration in seconds
+        
+    Returns:
+        True if successful
+    """
+    video_duration = get_video_duration(video_path)
+    if video_duration <= 0:
+        logging.error("Could not determine video duration for tpad")
+        return False
+    
+    extend_by = target_duration - video_duration
+    if extend_by <= 0:
+        # No extension needed
+        return False
+    
+    logging.info(f"Extending video by {extend_by:.1f}s using tpad (freeze last frame)")
+    
+    # tpad filter: stop=-1 means freeze last frame, stop_duration is how long
+    filter_complex = f"[0:v]tpad=stop=-1:stop_duration={extend_by:.3f}[vout]"
+    
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-filter_complex", filter_complex,
+        "-map", "[vout]",
+        "-map", "0:a?",  # Copy audio if present
+        "-c:v", "hevc_nvenc",
+        "-preset", "fast",
+        "-c:a", "copy",
+        str(output_path)
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            logging.error(f"tpad extension failed: {result.stderr[:200]}")
+            return False
+        return output_path.exists()
+    except Exception as e:
+        logging.error(f"tpad extension error: {e}")
+        return False
+
+
+@dataclass
+class RenderMeta:
+    """Metadata needed to re-render a clip at different duration."""
+    source_path: Path
+    start_time: float
+    original_duration: float
+    output_width: int
+    output_height: int
+    crop_x: int
+    crop_y: int
+    crop_w: int
+    crop_h: int
+    bg_width: int
+    bg_height: int
+    is_vertical_bg: bool
+
+
+def rerender_video_longer(
+    render_meta: RenderMeta,
+    target_duration: float,
+    output_path: Path,
+) -> bool:
+    """Re-render video from source with longer duration for TTS.
+    
+    Uses simple FFmpeg re-encoding (not full GPU pipeline) for speed.
+    Extends beyond original scene boundaries if needed.
+    
+    Args:
+        render_meta: Original render parameters
+        target_duration: Target duration in seconds
+        output_path: Output path for re-rendered video
+        
+    Returns:
+        True if successful
+    """
+    logging.info(f"Re-rendering video: {render_meta.original_duration:.1f}s → {target_duration:.1f}s")
+    
+    # Calculate crop filter for the aspect ratio
+    crop_filter = f"crop={render_meta.crop_w}:{render_meta.crop_h}:{render_meta.crop_x}:{render_meta.crop_y}"
+    scale_filter = f"scale={render_meta.output_width}:{render_meta.output_height}"
+    
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", f"{render_meta.start_time:.3f}",
+        "-t", f"{target_duration:.3f}",
+        "-i", str(render_meta.source_path),
+        "-vf", f"{crop_filter},{scale_filter}",
+        "-c:v", "hevc_nvenc",
+        "-preset", "fast",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        str(output_path)
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            logging.error(f"Re-render failed: {result.stderr[:200]}")
+            return False
+        return output_path.exists()
+    except Exception as e:
+        logging.error(f"Re-render error: {e}")
+        return False
+
+
 def mix_audio_with_video(
     video_path: Path,
     voiceover_path: Path,
     output_path: Path,
     game_audio_volume: float = 0.3,
     voiceover_volume: float = 1.0,
+    render_meta: Optional[RenderMeta] = None,
 ) -> bool:
     """Mix voiceover audio with video's existing audio.
+    
+    If TTS is longer than video:
+    - Small overage (≤3s): Extend video using tpad (freeze last frame)
+    - Large overage (>3s): Re-render from source if render_meta provided,
+      otherwise use tpad as fallback
     
     Args:
         video_path: Input video with game audio
@@ -447,24 +724,65 @@ def mix_audio_with_video(
         output_path: Output video with mixed audio
         game_audio_volume: Volume multiplier for game audio (0.0-1.0)
         voiceover_volume: Volume multiplier for voiceover (0.0-1.0)
+        render_meta: Optional render metadata for re-rendering longer clips
         
     Returns:
         True if successful
     """
-    # FFmpeg command to mix audio tracks
-    # - Lower the game audio volume
-    # - Add voiceover on top
-    # - Re-encode with NVENC
+    # Check durations to handle TTS longer than video
+    video_duration = get_video_duration(video_path)
+    audio_duration = get_audio_duration(voiceover_path)
     
+    duration_diff = audio_duration - video_duration
+    working_video = video_path
+    extended_video_tmp = None
+    rerendered_video_tmp = None
+    
+    if duration_diff > 0:
+        logging.info(f"TTS ({audio_duration:.1f}s) longer than video ({video_duration:.1f}s) by {duration_diff:.1f}s")
+        
+        if duration_diff <= 3.0:
+            # Small overage: extend video with tpad (freeze last frame)
+            extended_video_tmp = video_path.with_stem(video_path.stem + "_extended_tmp")
+            if extend_video_with_tpad(video_path, extended_video_tmp, audio_duration + 0.5):
+                working_video = extended_video_tmp
+                logging.info(f"Video extended to {audio_duration + 0.5:.1f}s with frozen last frame")
+            else:
+                logging.warning("tpad extension failed, TTS may be truncated")
+        else:
+            # Large overage: re-render from source if possible
+            if render_meta is not None:
+                rerendered_video_tmp = video_path.with_stem(video_path.stem + "_rerendered_tmp")
+                target_duration = audio_duration + 1.0  # Add 1s buffer
+                
+                if rerender_video_longer(render_meta, target_duration, rerendered_video_tmp):
+                    working_video = rerendered_video_tmp
+                    logging.info(f"Video re-rendered to {target_duration:.1f}s from source")
+                else:
+                    # Fallback to tpad if re-render fails
+                    logging.warning("Re-render failed, falling back to tpad")
+                    extended_video_tmp = video_path.with_stem(video_path.stem + "_extended_tmp")
+                    if extend_video_with_tpad(video_path, extended_video_tmp, audio_duration + 0.5):
+                        working_video = extended_video_tmp
+            else:
+                # No render_meta, use tpad as fallback
+                logging.info(f"Large TTS overage but no render_meta, using tpad fallback")
+                extended_video_tmp = video_path.with_stem(video_path.stem + "_extended_tmp")
+                if extend_video_with_tpad(video_path, extended_video_tmp, audio_duration + 0.5):
+                    working_video = extended_video_tmp
+    
+    # FFmpeg command to mix audio tracks
+    # - Use duration=longest to preserve TTS when it's longer than video
+    # - When video is extended/re-rendered, this still works correctly
     filter_complex = (
         f"[0:a]volume={game_audio_volume}[game];"
         f"[1:a]volume={voiceover_volume}[voice];"
-        "[game][voice]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+        "[game][voice]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
     )
     
     cmd = [
         "ffmpeg", "-y",
-        "-i", str(video_path),
+        "-i", str(working_video),
         "-i", str(voiceover_path),
         "-filter_complex", filter_complex,
         "-map", "0:v",
@@ -482,6 +800,14 @@ def mix_audio_with_video(
             text=True,
             timeout=300
         )
+        
+        # Cleanup temp files
+        for tmp_file in [extended_video_tmp, rerendered_video_tmp]:
+            if tmp_file and tmp_file.exists():
+                try:
+                    tmp_file.unlink()
+                except Exception:
+                    pass
         
         if result.returncode != 0:
             logging.error(f"FFmpeg audio mix failed: {result.stderr[:200]}")

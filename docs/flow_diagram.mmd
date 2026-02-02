@@ -1,0 +1,66 @@
+flowchart TD
+  Start[Start - Input Video] --> Analysis[Video Analysis & Scene Extraction<br/>Heuristic scoring + AI ranking]
+  Analysis --> Provider{AI_PROVIDER}
+  Provider -->|local qwen3vl| LocalPregen["Local pre-gen<br/>captions & story narration<br/>Quantized 4B FP8 model"]
+  Provider -->|remote openai/gemini| RemoteSkip["Remote provider<br/>on-demand captions"]
+  LocalPregen --> Unload["Unload vision models<br/>free VRAM for TTS"]
+  RemoteSkip --> Unload
+  Unload --> Render[Render clips<br/>GPU NVENC encoding<br/>Random length within min/max bounds]
+  Render --> SubToggle{ENABLE_SUBTITLES?}
+  
+  %% Subtitles ON path
+  SubToggle -->|Yes| SubPipeline[generate_subtitles]
+  SubPipeline --> SubtitleMode{SUBTITLE_MODE}
+  SubtitleMode -->|speech| Whisper[Whisper transcribe -> SRT]
+  SubtitleMode -->|ai_captions| AIGen[AI captions -> SRT]
+  SubtitleMode -->|story_*| StoryCheck{ENABLE_TTS?}
+  StoryCheck -->|Yes| StoryMergedProbe["Probe MERGED narration TTS<br/>Single continuous audio measurement<br/>Distribute timing proportionally"]
+  StoryCheck -->|No| StoryWordEst["Word-count estimate<br/>for subtitle timing"]
+  Whisper --> ApplyPyCaps[apply_pycaps_subtitles<br/>PyCaps template rendering]
+  AIGen --> ApplyPyCaps
+  StoryMergedProbe --> ApplyPyCaps
+  StoryWordEst --> ApplyPyCaps
+  ApplyPyCaps --> SubTTSDecision{ENABLE_TTS?}
+  SubTTSDecision -->|Yes| SubTTSGen["Generate TTS for captions<br/>Story: ONE continuous audio<br/>Normal: per-caption with gaps"]
+  SubTTSDecision -->|No| SubOnly[Return subtitled clip]
+  SubTTSGen --> SubReRenderCheck{TTS > clip + 1.5s?}
+  SubReRenderCheck -->|Yes| SubReRender["Re-render clip longer<br/>using source video<br/>Beyond scene boundaries OK"]
+  SubReRenderCheck -->|No| SubTpadCheck{TTS > clip?}
+  SubTpadCheck -->|Yes| SubTpad["tpad: freeze last frame<br/>extend video to match TTS"]
+  SubTpadCheck -->|No| SubMix[Mix audio]
+  SubReRender --> SubMix
+  SubTpad --> SubMix
+  SubMix --> Final
+  
+  %% Subtitles OFF path
+  SubToggle -->|No| TTSOnlyToggle{ENABLE_TTS?}
+  TTSOnlyToggle -->|Yes| TTSOnly[TTS-only path]
+  TTSOnly --> PregenCheck{Preloaded content?}
+  PregenCheck -->|p_objects| UsePreg["Use pregenerated captions<br/>generate_for_captions"]
+  PregenCheck -->|p_narration| StoryVoice["generate_story_voiceover<br/>Continuous narration"]
+  PregenCheck -->|none & remote| OnDemand["generate_ai_captions<br/>-> generate_for_captions"]
+  PregenCheck -->|none & no-ai| WhisperFB["Whisper transcribe<br/>-> generate_for_captions"]
+  UsePreg --> ReRenderCheck
+  StoryVoice --> ReRenderCheck
+  OnDemand --> ReRenderCheck
+  WhisperFB --> ReRenderCheck
+  ReRenderCheck{TTS > clip + 1.5s?}
+  ReRenderCheck -->|Yes| ReRender["Re-render clip longer<br/>from source video"]
+  ReRenderCheck -->|No| TpadCheck{TTS > clip?}
+  TpadCheck -->|Yes| Tpad["tpad: freeze last frame"]
+  TpadCheck -->|No| Mix[Mix audio with video]
+  ReRender --> Mix
+  Tpad --> Mix
+  
+  TTSOnlyToggle -->|No| NoAudio[Return clip unchanged]
+  Mix --> Final[Final clip: subtitled and/or voiced]
+  SubOnly --> Final
+  NoAudio --> Final
+  
+  %% TTS Processing Details
+  TTSDetails["TTS Processing:<br/>• Qwen3-TTS VoiceDesign<br/>• FlashAttention 2 optimized<br/>• Story: continuous merged audio<br/>• Normal: per-caption with timing<br/>• Voice design from natural language"]
+  Final --> TTSDetails
+  
+  %% Notes
+  Notes["Key Optimizations:<br/>• VRAM management: unload models between phases<br/>• Story subtitle timing synced with merged TTS<br/>• Re-render only if TTS > clip + 1.5s<br/>• tpad freeze-frame for small overages<br/>• Slang preprocessing: rn→right now, --→pause"]
+  TTSDetails --> Notes

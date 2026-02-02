@@ -31,13 +31,13 @@ class ClipNarration:
 
 
 def generate_unified_story(
-    clips: List[Tuple[Path, str]],
+    clips: List[Tuple[Path, str, Optional[dict]]],
     story_style: str
 ) -> List[ClipNarration]:
     """Generate a unified narrative across multiple clips.
     
     Args:
-        clips: List of (clip_path, detected_category) tuples
+        clips: List of (clip_path, detected_category, render_meta) tuples
         story_style: One of: story_news, story_roast, story_creepypasta, story_dramatic
         
     Returns:
@@ -56,13 +56,16 @@ def generate_unified_story(
     
     provider = os.getenv("AI_PROVIDER", "gemini").lower()
     
+    # Extract just (path, category) for story generation (render_meta not needed)
+    clips_for_story = [(p, cat) for p, cat, _ in clips]
+    
     if provider == "openai":
-        return _generate_story_openai(clips, story_style)
+        return _generate_story_openai(clips_for_story, story_style)
     elif provider == "local":
         logging.warning("Story mode not available in local mode")
         return []
     else:  # gemini
-        return _generate_story_gemini(clips, story_style)
+        return _generate_story_gemini(clips_for_story, story_style)
 
 
 def _get_story_prompt(story_style: str, num_clips: int) -> str:
@@ -79,7 +82,7 @@ Create a cohesive news narrative that flows across all {num_clips} clips:
 Style: Professional, analytical, building excitement like a sports broadcast.
 Tone: Clear, confident, measured pace.
 
-Each segment should be 2-3 sentences that connect to form one continuous story.""",
+IMPORTANT: Generate 4-6 sentences per clip segment to fill the video duration. Space narration throughout each clip - don't front-load all text at the start.""",
 
         "story_roast": f"""You are a sarcastic commentator creating a {num_clips}-part roast.
 
@@ -91,7 +94,7 @@ Create a playful roasting narrative that flows across all {num_clips} clips:
 Style: Sarcastic but not mean, comedic timing, playful mockery.
 Tone: Amused, slightly condescending but entertaining.
 
-Each segment should be 2-3 sentences that escalate the roast.""",
+IMPORTANT: Generate 4-6 sentences per clip segment to fill the video duration. Space the roasting throughout each clip.""",
 
         "story_creepypasta": f"""You are a horror narrator creating a {num_clips}-part creepypasta.
 
@@ -103,7 +106,7 @@ Create an unsettling narrative that builds tension across all {num_clips} clips:
 Style: Horror/tension building, slow reveals, ominous.
 Tone: Deep, deliberate, building dread with ellipses.
 
-Each segment should be 2-3 sentences that build suspense.""",
+IMPORTANT: Generate 4-6 sentences per clip segment to fill the video duration. Build tension throughout each clip with proper pacing.""",
 
         "story_dramatic": f"""You are an epic narrator creating a {num_clips}-part cinematic story.
 
@@ -115,7 +118,7 @@ Create a dramatic narrative arc across all {num_clips} clips:
 Style: Epic, cinematic, movie-trailer intensity.
 Tone: Powerful, inspiring, grand.
 
-Each segment should be 2-3 sentences of epic narration."""
+IMPORTANT: Generate 4-6 sentences per clip segment to fill the video duration. Space the epic narration throughout each clip."""
     }
     
     return style_guides.get(story_style, style_guides["story_dramatic"])
@@ -133,19 +136,83 @@ def _generate_story_gemini(
         return []
     
     try:
+        import time
         from google import genai
         client = genai.Client(api_key=api_key)
         model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
         
-        # Upload all clip videos
+        # Upload all clip videos with retry logic
+        import time
         uploaded_files = []
+        upload_attempts = 3
+        
         for clip_path, _ in clips:
-            with open(clip_path, "rb") as f:
-                video_file = client.files.upload(
-                    file=f,
-                    config={"mime_type": "video/mp4"}
-                )
-                uploaded_files.append(video_file)
+            video_file = None
+            for attempt in range(upload_attempts):
+                try:
+                    with open(clip_path, "rb") as f:
+                        video_file = client.files.upload(
+                            file=f,
+                            config={"mime_type": "video/mp4"}
+                        )
+                    uploaded_files.append(video_file)
+                    break
+                except Exception as e:
+                    if attempt < upload_attempts - 1:
+                        logging.warning(f"Gemini upload attempt {attempt + 1} for {clip_path.name} failed: {e}, retrying...")
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                    else:
+                        # Cleanup any already uploaded files
+                        for f in uploaded_files:
+                            try:
+                                client.files.delete(name=f.name)
+                            except Exception:
+                                pass
+                        raise
+        
+        # Poll until all files are ACTIVE (Gemini processes uploads asynchronously)
+        max_wait = 180  # Increased to 3 minutes per file
+        poll_interval = 2
+        
+        for i, video_file in enumerate(uploaded_files):
+            waited = 0
+            logging.info(f"Waiting for Gemini to process file {i+1}/{len(uploaded_files)}: {video_file.name}")
+            while waited < max_wait:
+                try:
+                    file_status = client.files.get(name=video_file.name)
+                    state = file_status.state.name
+                    logging.debug(f"File {i+1} state: {state} (waited {waited}s)")
+                    
+                    if state == "ACTIVE":
+                        logging.info(f"File {i+1} ready after {waited}s")
+                        break
+                    elif state == "FAILED":
+                        raise RuntimeError(f"Gemini file processing failed: {video_file.name}")
+                    
+                    time.sleep(poll_interval)
+                    waited += poll_interval
+                except Exception as e:
+                    if "precondition" in str(e).lower() and waited < max_wait:
+                        # File might still be processing, continue polling
+                        logging.debug(f"Precondition error (file still processing), continuing... ({waited}s)")
+                        time.sleep(poll_interval)
+                        waited += poll_interval
+                    else:
+                        # Cleanup all uploaded files
+                        for f in uploaded_files:
+                            try:
+                                client.files.delete(name=f.name)
+                            except Exception:
+                                pass
+                        raise
+            else:
+                # Cleanup all uploaded files on timeout
+                for f in uploaded_files:
+                    try:
+                        client.files.delete(name=f.name)
+                    except Exception:
+                        pass
+                raise RuntimeError(f"Gemini file processing timed out after {max_wait}s")
         
         # Build prompt
         style_guide = _get_story_prompt(story_style, len(clips))
@@ -176,10 +243,31 @@ The clips:"""
             content_parts.append(f"\n\nClip {i+1}:")
             content_parts.append(video_file)
         
-        response = client.models.generate_content(
-            model=model_name,
-            contents=content_parts
-        )
+        # Add extra delay before using the files to ensure they're fully ready
+        time.sleep(1)
+        
+        # Retry logic for generate_content in case of transient errors
+        max_retries = 3
+        response = None
+        for retry in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=content_parts
+                )
+                break
+            except Exception as e:
+                if "precondition" in str(e).lower() and retry < max_retries - 1:
+                    logging.warning(f"Precondition error on attempt {retry + 1}, retrying after delay...")
+                    time.sleep(3 * (retry + 1))  # Increasing delay: 3s, 6s, 9s
+                else:
+                    # Cleanup uploaded files before raising
+                    for f in uploaded_files:
+                        try:
+                            client.files.delete(name=f.name)
+                        except Exception:
+                            pass
+                    raise
         
         result_text = response.text.strip()
         
@@ -205,6 +293,13 @@ The clips:"""
                     detected_category=category,
                     clip_path=clip_path
                 ))
+        
+        # Cleanup uploaded files
+        for video_file in uploaded_files:
+            try:
+                client.files.delete(name=video_file.name)
+            except Exception:
+                pass
         
         arc = data.get("narrative_arc", "")
         logging.info(f"Generated story arc: {arc}")

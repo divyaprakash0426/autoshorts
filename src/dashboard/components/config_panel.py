@@ -7,23 +7,35 @@ import streamlit as st
 from dashboard.utils.config import EnvSection, coerce_value, load_env_values, save_env_values
 
 TTS_LANGUAGE_LABELS = {
-    "en": "English (en)",
-    "zh": "Chinese (zh)",
-    "ja": "Japanese (ja)",
-    "ko": "Korean (ko)",
-    "de": "German (de)",
-    "fr": "French (fr)",
-    "ru": "Russian (ru)",
-    "pt": "Portuguese (pt)",
-    "es": "Spanish (es)",
-    "it": "Italian (it)",
+    "en": "🇺🇸 English",
+    "zh": "🇨🇳 Chinese",
+    "ja": "🇯🇵 Japanese",
+    "ko": "🇰🇷 Korean",
+    "de": "🇩🇪 German",
+    "fr": "🇫🇷 French",
+    "ru": "🇷🇺 Russian",
+    "pt": "🇵🇹 Portuguese",
+    "es": "🇪🇸 Spanish",
+    "it": "🇮🇹 Italian",
+}
+
+# Section icons for visual enhancement
+SECTION_ICONS = {
+    "Core Settings": "🎯",
+    "Clip Length Settings": "⏱️",
+    "AI Providers": "🤖",
+    "Semantic Analysis": "🔍",
+    "Subtitles": "💬",
+    "TTS Voiceover": "🔊",
+    "Decord & Debug": "🔧",
+    "Rendering Settings": "🎬",
 }
 
 
 def _render_field(field, current_value):
     key = f"cfg_{field.name}"
     if field.field_type == "bool":
-        return st.checkbox(field.label, value=bool(current_value), key=key, help=field.help_text)
+        return st.toggle(field.label, value=bool(current_value), key=key, help=field.help_text)
     if field.field_type == "int":
         return st.number_input(
             field.label,
@@ -35,11 +47,11 @@ def _render_field(field, current_value):
             help=field.help_text,
         )
     if field.field_type == "int_auto":
-        # Special field type: checkbox for auto (0), number input for manual override
         is_auto = int(current_value) == 0
         col1, col2 = st.columns([1, 2])
-        auto_checked = col1.checkbox("Auto", value=is_auto, key=f"{key}_auto", help="Let system decide automatically")
+        auto_checked = col1.toggle("Auto", value=is_auto, key=f"{key}_auto", help="Let system decide automatically")
         if auto_checked:
+            col2.caption(f"_{field.label}: Auto-calculated_")
             return 0
         else:
             manual_value = int(current_value) if int(current_value) > 0 else int(field.min_value or 30)
@@ -51,6 +63,7 @@ def _render_field(field, current_value):
                 step=int(field.step) if field.step is not None else 1,
                 key=key,
                 help=field.help_text,
+                label_visibility="collapsed",
             )
     if field.field_type == "float":
         return st.slider(
@@ -87,25 +100,47 @@ def _render_field(field, current_value):
     if field.field_type == "password":
         return st.text_input(field.label, value=str(current_value), type="password", key=key, help=field.help_text)
     if field.multiline:
-        return st.text_area(field.label, value=str(current_value), key=key, help=field.help_text)
+        return st.text_area(field.label, value=str(current_value), key=key, help=field.help_text, height=100)
     return st.text_input(field.label, value=str(current_value), key=key, help=field.help_text)
 
 
 def render_config_panel(sections: Tuple[EnvSection, ...]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Render config panel with auto-save functionality."""
+    
+    # Custom styling
+    st.markdown("""
+        <style>
+        .stExpander {
+            border: 1px solid #333;
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+        }
+        .stExpander > div:first-child {
+            background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
+            border-radius: 8px 8px 0 0;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     values, extras = load_env_values()
     updated_values: Dict[str, str] = dict(values)
     
     # Track AI provider for conditional rendering
     ai_provider = values.get("AI_PROVIDER", "openai")
+    
+    # Track changes for auto-save
+    changes_made = False
 
     for section in sections:
-        with st.expander(section.title, expanded=section.expanded):
+        icon = SECTION_ICONS.get(section.title, "📋")
+        with st.expander(f"{icon} {section.title}", expanded=section.expanded):
+            # Create columns for better layout in some sections
             for field in section.fields:
                 # Conditional rendering based on AI provider
                 if field.name == "GEMINI_API_KEY" and ai_provider != "gemini":
-                    continue  # Hide Gemini key when not using Gemini
+                    continue
                 if field.name == "OPENAI_API_KEY" and ai_provider not in ("openai",):
-                    continue  # Hide OpenAI key when not using OpenAI
+                    continue
                 if field.name == "GEMINI_MODEL" and ai_provider != "gemini":
                     continue
                 if field.name in ("OPENAI_MODEL", "OPENAI_TAGGING_MODEL") and ai_provider != "openai":
@@ -113,19 +148,28 @@ def render_config_panel(sections: Tuple[EnvSection, ...]) -> Tuple[Dict[str, str
                 
                 current_value = coerce_value(field, values.get(field.name))
                 result = _render_field(field, current_value)
+                
+                # Check if value changed
+                if str(result) != str(current_value):
+                    changes_made = True
+                
                 updated_values[field.name] = result
                 
                 # Update AI provider tracking if it changed
                 if field.name == "AI_PROVIDER":
                     ai_provider = result
 
-    col1, col2 = st.columns([1, 1])
-    saved = False
-    if col1.button("Save configuration", type="primary"):
+    # Auto-save when changes are detected
+    if changes_made:
         save_env_values(updated_values, extras)
-        saved = True
-    if col2.button("Reload from .env"):
-        st.rerun()
-    if saved:
-        st.success("Configuration saved to .env")
+        st.toast("✅ Settings saved", icon="💾")
+    
+    # Manual save button as backup
+    col1, col2 = st.columns([1, 3])
+    if col1.button("💾 Save All", type="primary", use_container_width=True):
+        save_env_values(updated_values, extras)
+        st.success("Configuration saved!")
+    
+    col2.caption("_Settings are auto-saved when you make changes_")
+    
     return updated_values, extras

@@ -31,13 +31,13 @@ class ClipScore:
     
     # Semantic types for clip classification
     SEMANTIC_TYPES = {
-        "action": "Combat, kills, intense gameplay, close calls",
-        "funny": "Fails, glitches, unexpected humor, comedic timing",
-        "clutch": "1vX situations, comebacks, last-second wins",
-        "wtf": "Unexpected events, 'wait what?' moments, random chaos",
-        "epic_fail": "Embarrassing deaths, tragic blunders, game-losing mistakes",
-        "hype": "Celebrations, 'LET'S GO' energy, peak excitement",
-        "skill": "Trick shots, IQ plays, advanced mechanics, impressive techniques",
+        "action": "Standard combat, shooting, fighting - normal intense gameplay without special moments",
+        "funny": "Fails, glitches, ragdoll physics, unexpected humor, comedic timing, awkward moments",
+        "clutch": "1vX clutch wins, last-second saves, comebacks from low health, narrowly avoiding death",
+        "wtf": "Unexpected chaos, 'wait what?!' moments, random events, physics breaking, confusing situations",
+        "epic_fail": "Embarrassing deaths, tragic blunders, game-losing mistakes, throwing the match",
+        "hype": "Victory celebrations, 'LET'S GO' energy, peak excitement, winning moments",
+        "skill": "Trick shots, flick shots, IQ plays, advanced mechanics, pro-level techniques, impressive aim",
     }
     
     # Map semantic types to caption styles
@@ -66,18 +66,18 @@ emotion: Intense excitement, hype, constant enthusiasm.
 tone: Upbeat, authoritative, commanding attention.
 personality: Confident, extroverted, engaging, competitive edge.""",
         
-        "funny": """gender: Male.
-pitch: Mid to slightly high male pitch with playful variations.
-speed: Moderate pace with deliberate pauses for comedic timing.
-volume: Conversational, occasionally louder for punchlines.
+        "funny": """gender: Female.
+pitch: Mid to slightly high female pitch with playful melodic variations.
+speed: Moderate pace with perfect comedic timing and dramatic pauses.
+volume: Conversational, occasionally louder for emphasis on punchlines.
 age: Young adult, early to mid 20s.
-clarity: Clear but relaxed, not overly precise.
-fluency: Fluent with intentional hesitations for humor, occasional 'uh', 'like'.
+clarity: Clear and expressive, not overly precise.
+fluency: Fluent with intentional hesitations for humor, natural 'like', 'literally'.
 accent: American English, casual GenZ cadence.
-texture: Smooth, light vocal quality with natural warmth.
-emotion: Amused, ironic, playfully sarcastic.
-tone: Laid-back, chill, slightly deadpan with smirk energy.
-personality: Witty, self-aware, relatable, gently mocking.""",
+texture: Bright, warm vocal quality with infectious energy.
+emotion: Amused, ironic, playfully sarcastic with eye-roll energy.
+tone: Laid-back but sharp, witty commentary with smirk energy.
+personality: Quick-witted, self-aware, relatable, gently roasting.""",
         
         "clutch": """gender: Male.
 pitch: Starting low and tense, building to high excited peaks.
@@ -92,31 +92,31 @@ emotion: Building anticipation transitioning to explosive celebration.
 tone: Dramatic, tense, then triumphant and victorious.
 personality: Professional yet passionate, masterful tension-builder.""",
         
-        "wtf": """gender: Male.
-pitch: Erratic pitch with sudden jumps and confused inflections.
-speed: Irregular pacing, speeding up in disbelief, pausing in confusion.
-volume: Moderate with sudden loud outbursts of surprise.
-age: Young adult, mid 20s.
-clarity: Clear but broken by genuine bewilderment.
-fluency: Interrupted flow, hesitations, stammering from shock.
+        "wtf": """gender: Female.
+pitch: Expressive female pitch with dramatic jumps and confused inflections.
+speed: Irregular pacing, speeding up in disbelief, pausing in utter confusion.
+volume: Moderate with sudden loud outbursts of surprise and shock.
+age: Young adult, early to mid 20s.
+clarity: Clear but broken by genuine bewilderment and disbelief.
+fluency: Interrupted flow, hesitations, stammering from pure shock.
 accent: American English, casual conversational.
-texture: Light texture with air of disbelief.
-emotion: Confused, bewildered, amused by absurdity.
-tone: 'Wait what?', questioning everything, perplexed.
-personality: Reactive, expressive, openly confused but entertained.""",
+texture: Bright, expressive vocal quality with air of disbelief.
+emotion: Confused, bewildered, amused by complete absurdity.
+tone: 'Wait what?!', 'excuse me?!', questioning everything, hilariously perplexed.
+personality: Reactive, dramatically expressive, openly confused but thoroughly entertained.""",
         
-        "epic_fail": """gender: Male.
-pitch: Mid-range descending to low defeated tones.
-speed: Slow, heavy delivery with resigned sighs.
-volume: Starts normal, drops to quiet disappointment.
-age: Young adult to middle-aged, late 20s to 30s.
-clarity: Very clear, articulating the tragedy dramatically.
-fluency: Smooth but with emotional pauses and sighs.
-accent: American English, neutral.
-texture: Warm but tinged with sympathetic sadness.
-emotion: Disappointed, sympathetic, comedically tragic.
-tone: Dramatic despair mixed with humor, mock-serious.
-personality: Empathetic, understanding, finding humor in failure.""",
+        "epic_fail": """gender: Female.
+pitch: Mid-range descending to low sympathetic tones with dramatic flair.
+speed: Slow, heavy delivery with resigned sighs and dramatic pauses.
+volume: Starts normal, drops to quiet disappointment, occasional disbelief spikes.
+age: Young adult, mid 20s.
+clarity: Very clear, articulating the tragedy with dramatic emphasis.
+fluency: Smooth but with emotional pauses, sighs, and sympathetic groans.
+accent: American English, expressive and warm.
+texture: Warm, empathetic vocal quality with theatrical flair.
+emotion: Disappointed, sympathetic, finding humor in the tragedy.
+tone: Dramatic despair mixed with 'oh no honey', mock-serious commentary.
+personality: Empathetic storyteller, understanding, finding comedic gold in failure.""",
         
         "hype": """gender: Male.
 pitch: High energy male pitch, constantly elevated and excited.
@@ -131,18 +131,18 @@ emotion: Pure unbridled excitement, celebration, joy.
 tone: 'LET'S GOOO', maximalist hype, infectious energy.
 personality: Extroverted to the extreme, contagiously enthusiastic.""",
         
-        "skill": """gender: Male.
-pitch: Low to mid-range, stable and controlled.
-speed: Measured, deliberate pace allowing appreciation.
-volume: Clear and projected, professional level.
-age: Middle-aged adult, 35 to 45.
-clarity: Impeccable articulation, refined speech.
-fluency: Flawless flow, sophisticated vocabulary.
+        "skill": """gender: Female.
+pitch: Clear mid-range female pitch, stable and confident.
+speed: Measured, deliberate pace allowing appreciation of the play.
+volume: Clear and projected, professional analyst level.
+age: Adult, late 20s to mid 30s.
+clarity: Impeccable articulation, refined and precise speech.
+fluency: Flawless flow, intelligent vocabulary.
 accent: British English, educated and polished.
-texture: Smooth, cultured vocal quality with depth.
-emotion: Impressed, appreciative, respectful admiration.
-tone: Analytical yet enthusiastic, thoughtful praise.
-personality: Intelligent, observant, genuine appreciation for craft.""",
+texture: Smooth, sophisticated vocal quality with warmth and depth.
+emotion: Genuinely impressed, appreciative, respectful admiration.
+tone: Analytical yet enthusiastic, thoughtful expert praise.
+personality: Intelligent, observant, genuine appreciation for craft and technique.""",
     }
     
     # Map caption styles to TTS voice presets (for direct style selection)
@@ -212,18 +212,18 @@ emotion: Ironic detachment mixed with genuine enthusiasm.
 tone: Casual, meme-aware, chronically online vibes.
 personality: Self-aware, ironic, effortlessly cool, relatable chaos.""",
         
-        "story_news": """gender: Female.
-pitch: Mid-range female pitch, professional and steady.
-speed: Moderate, measured pace with precise timing.
-volume: Clear, projected, broadcast-quality loudness.
-age: Middle-aged adult, 35 to 45.
-clarity: Impeccable enunciation, television-standard precision.
-fluency: Flawless professional delivery, no hesitations.
-accent: American English, neutral broadcast accent.
-texture: Polished, refined vocal quality with authority.
-emotion: Objective, serious, professionally engaged.
-tone: Journalistic, factual, trustworthy authority.
-personality: Professional, composed, credible, commanding respect.""",
+        "story_news": """gender: Male.
+pitch: Mid-range male pitch, energetic and dynamic.
+speed: Fast-paced, building excitement with rapid-fire delivery.
+volume: Loud, projected, arena-filling energy.
+age: Young adult, late 20s to early 30s.
+clarity: Sharp, punchy enunciation, esports casting precision.
+fluency: Rapid-fire with hype pauses, building momentum.
+accent: American English, energetic gaming culture.
+texture: Bright, electric vocal quality with infectious enthusiasm.
+emotion: Excited, hyped, passionate about the plays.
+tone: Enthusiastic, analytical, building tension and release.
+personality: Charismatic caster, knowledgeable, gets hyped with the audience.""",
         
         "story_roast": """gender: Male.
 pitch: Mid to high pitch with sarcastic inflections and exaggerated tones.
@@ -251,18 +251,18 @@ emotion: Foreboding, sinister, building unease.
 tone: Ominous, creeping horror, inevitable dread.
 personality: Mysterious, unsettling, knows something you don't.""",
         
-        "story_dramatic": """gender: Male.
-pitch: Deep, resonant bass with powerful projection.
-speed: Slow, deliberate pacing with strategic pauses for impact.
-volume: Loud, commanding presence filling the space.
-age: Mature adult, 40s to 50s.
-clarity: Perfect diction, every word pronounced with gravitas.
-fluency: Flawless delivery with cinematic timing.
-accent: American English, neutral broadcast quality.
-texture: Rich, velvety depth with cinematic warmth.
-emotion: Inspiring, epic, grandiose.
-tone: Heroic, momentous, like narrating legends.
-personality: Authoritative, wise, larger-than-life presence.""",
+        "story_dramatic": """gender: Female.
+pitch: Rich, resonant mid-range with expressive depth.
+speed: Measured, deliberate pacing with dramatic pauses for impact.
+volume: Commanding presence, clear projection with emotional range.
+age: Mature adult, late 30s to 40s.
+clarity: Perfect diction, every word delivered with intention.
+fluency: Flawless delivery with cinematic timing and gravitas.
+accent: American English, theatrical broadcast quality.
+texture: Warm, velvety depth with captivating allure.
+emotion: Intense, evocative, drawing listeners into the story.
+tone: Epic, momentous, like narrating legends and tragedies.
+personality: Wise, commanding, magnetic storyteller presence.""",
     }
     
     clip_path: Path
@@ -382,34 +382,93 @@ class GeminiAnalyzer(SemanticAnalyzer):
 
         def _analyze_single_clip_gemini(clip_info):
             try:
+                import time
                 logging.info(f"Analyzing clip: {clip_info.clip_path.name}")
                 client = self._get_client()
 
-                with open(clip_info.clip_path, "rb") as f:
-                    video_file = client.files.upload(
-                        file=f,
-                        config={"mime_type": "video/mp4"}
-                    )
+                # Upload with retry logic
+                video_file = None
+                upload_attempts = 3
+                for attempt in range(upload_attempts):
+                    try:
+                        with open(clip_info.clip_path, "rb") as f:
+                            video_file = client.files.upload(
+                                file=f,
+                                config={"mime_type": "video/mp4"}
+                            )
+                        break
+                    except Exception as e:
+                        if attempt < upload_attempts - 1:
+                            logging.warning(f"Upload attempt {attempt + 1} failed for {clip_info.clip_path.name}: {e}, retrying...")
+                            time.sleep(2 ** attempt)
+                        else:
+                            raise
                 
-                prompt = f"""Analyze this video clip and rate it for ALL categories.
+                # Poll until file is ACTIVE
+                max_wait = 120  # 2 minutes max
+                poll_interval = 2
+                waited = 0
+                while waited < max_wait:
+                    try:
+                        file_status = client.files.get(name=video_file.name)
+                        state = file_status.state.name
+                        if state == "ACTIVE":
+                            break
+                        elif state == "FAILED":
+                            raise RuntimeError(f"Gemini file processing failed: {video_file.name}")
+                        time.sleep(poll_interval)
+                        waited += poll_interval
+                    except Exception as e:
+                        if "precondition" in str(e).lower() and waited < max_wait:
+                            time.sleep(poll_interval)
+                            waited += poll_interval
+                        else:
+                            raise
+                else:
+                    raise RuntimeError(f"Gemini file processing timed out after {max_wait}s")
+                
+                # Small delay for stability
+                time.sleep(0.5)
+                
+                prompt = f"""Analyze this gameplay video clip and classify it into the BEST matching category.
+
+IMPORTANT: Be specific! Don't default to "action" - carefully consider ALL categories:
 
 CATEGORIES:
 {categories_desc}
 
-Respond with ONLY valid JSON:
+CLASSIFICATION GUIDE:
+- ACTION: Standard combat, shooting, fighting - the "normal" gameplay
+- FUNNY: Look for fails, glitches, ragdoll physics, unexpected humor, awkward moments
+- CLUTCH: Last-second saves, 1vX wins, comeback victories, surviving with low health
+- WTF: "Wait, what just happened?!" moments - random, unexpected, confusing events
+- EPIC_FAIL: Deaths that are embarrassing, tragic mistakes, throwing the game
+- HYPE: Celebrations, victory moments, peak excitement, "LET'S GO" energy
+- SKILL: Impressive plays - trick shots, perfect aim, smart strategies, pro-level moves
+
+Ask yourself: What makes this clip SPECIAL? Is it just normal action, or is there something MORE?
+
+Respond with ONLY valid JSON (score each category 0.0-1.0):
 {{{categories_json}, "best_category": "action", "reason": "Why this clip fits the selected category"}}
 
-Scoring guide (per category):
-- 0.0-0.3: Not relevant
-- 0.4-0.6: Somewhat relevant
-- 0.7-0.8: Good match
-- 0.9-1.0: Exceptional
-"""
+Be honest with scores - if a clip is genuinely just normal action, that's fine. But if there's humor, skill, or a WTF moment, IDENTIFY IT!"""
                 
-                response = client.models.generate_content(
-                    model=self.model_name,
-                    contents=[video_file, prompt]
-                )
+                # Retry logic for generate_content
+                max_retries = 3
+                response = None
+                for retry in range(max_retries):
+                    try:
+                        response = client.models.generate_content(
+                            model=self.model_name,
+                            contents=[video_file, prompt]
+                        )
+                        break
+                    except Exception as e:
+                        if "precondition" in str(e).lower() and retry < max_retries - 1:
+                            logging.warning(f"Precondition error for {clip_info.clip_path.name}, retry {retry + 1}...")
+                            time.sleep(3 * (retry + 1))
+                        else:
+                            raise
                 
                 response_text = response.text.strip()
                 
@@ -452,7 +511,7 @@ Scoring guide (per category):
                 clip_info.reason = f"Error: {str(e)[:50]}"
                 return clip_info
 
-        max_workers = 5 # Gemini might be stricter with concurrent uploads
+        max_workers = 3  # Reduced from 5 to avoid overwhelming Gemini API
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_clip = {
                 executor.submit(_analyze_single_clip_gemini, clip): clip 
@@ -567,19 +626,28 @@ class OpenAIAnalyzer(SemanticAnalyzer):
                     clip_info.detected_category = "action"
                     return clip_info
                 
-                prompt_text = f"""These are keyframes from a video clip. Analyze them for ALL categories.
+                prompt_text = f"""These are keyframes from a gameplay video clip. Analyze and classify into the BEST matching category.
+
+IMPORTANT: Be specific! Don't default to "action" - carefully consider ALL categories:
 
 CATEGORIES:
 {categories_desc}
 
-Respond with ONLY valid JSON:
+CLASSIFICATION GUIDE:
+- ACTION: Standard combat, shooting, fighting - the "normal" gameplay
+- FUNNY: Look for fails, glitches, ragdoll physics, unexpected humor, awkward moments
+- CLUTCH: Last-second saves, 1vX wins, comeback victories, surviving with low health
+- WTF: "Wait, what just happened?!" moments - random, unexpected, confusing events
+- EPIC_FAIL: Deaths that are embarrassing, tragic mistakes, throwing the game
+- HYPE: Celebrations, victory moments, peak excitement, "LET'S GO" energy
+- SKILL: Impressive plays - trick shots, perfect aim, smart strategies, pro-level moves
+
+Ask yourself: What makes this clip SPECIAL? Is it just normal action, or is there something MORE?
+
+Respond with ONLY valid JSON (score each category 0.0-1.0):
 {{{categories_json}, "best_category": "action", "reason": "Why this clip fits the selected category"}}
 
-Scoring guide (per category):
-- 0.0-0.3: Not relevant
-- 0.4-0.6: Somewhat relevant
-- 0.7-0.8: Good match
-- 0.9-1.0: Exceptional"""
+Be honest with scores - if genuinely just normal action, that's fine. But if there's humor, skill, or a WTF moment, IDENTIFY IT!"""
                 
                 # Build message with images
                 content = [{"type": "text", "text": prompt_text}]
@@ -844,10 +912,12 @@ def generate_ai_captions(
 def _get_caption_prompt(style: str, max_captions: int, duration: float) -> str:
     """Generate the prompt for AI caption generation."""
     
-    # Story modes use fewer but longer captions
+    # Story modes use fewer but longer captions (but not as aggressively capped)
     is_story_mode = style.startswith("story_")
     if is_story_mode:
-        max_captions = min(max_captions, 4)  # Cap at 4 for story modes
+        # Story mode: aim for ~1 caption per 6-8 seconds instead of hard cap
+        # Let dynamic calculation in subtitle_generator handle the count
+        max_captions = min(max_captions, max(6, int(duration / 6)))  # At least 6, or 1 per 6s
     
     style_guides = {
         "gaming": """Generate short, punchy captions like gaming content creators use.
@@ -941,19 +1011,75 @@ def _generate_captions_gemini(
         
         logging.info(f"Generating AI captions for: {video_path.name} ({duration:.1f}s)")
         
-        # Upload video
-        with open(video_path, "rb") as f:
-            video_file = client.files.upload(
-                file=f,
-                config={"mime_type": "video/mp4"}
-            )
+        # Upload video with retry logic
+        import time
+        video_file = None
+        upload_attempts = 3
+        for attempt in range(upload_attempts):
+            try:
+                with open(video_path, "rb") as f:
+                    video_file = client.files.upload(
+                        file=f,
+                        config={"mime_type": "video/mp4"}
+                    )
+                break
+            except Exception as e:
+                if attempt < upload_attempts - 1:
+                    logging.warning(f"Gemini upload attempt {attempt + 1} failed: {e}, retrying...")
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    raise
+        
+        # Poll until file is ACTIVE (Gemini processes uploads asynchronously)
+        max_wait = 180  # Increased to 3 minutes
+        poll_interval = 2
+        waited = 0
+        logging.info(f"Waiting for Gemini to process file: {video_file.name}")
+        while waited < max_wait:
+            try:
+                file_status = client.files.get(name=video_file.name)
+                state = file_status.state.name
+                logging.debug(f"File state: {state} (waited {waited}s)")
+                
+                if state == "ACTIVE":
+                    logging.info(f"File ready after {waited}s")
+                    break
+                elif state == "FAILED":
+                    raise RuntimeError(f"Gemini file processing failed: {video_file.name}")
+                
+                time.sleep(poll_interval)
+                waited += poll_interval
+            except Exception as e:
+                if "precondition" in str(e).lower() and waited < max_wait:
+                    # File might still be processing, continue polling
+                    logging.debug(f"Precondition error (file still processing), continuing... ({waited}s)")
+                    time.sleep(poll_interval)
+                    waited += poll_interval
+                else:
+                    raise
+        else:
+            raise RuntimeError(f"Gemini file processing timed out after {max_wait}s")
         
         prompt = _get_caption_prompt(style, max_captions, duration)
         
-        response = client.models.generate_content(
-            model=model_name,
-            contents=[video_file, prompt]
-        )
+        # Add extra delay before using the file to ensure it's fully ready
+        time.sleep(1)
+        
+        # Retry logic for generate_content in case of transient errors
+        max_retries = 3
+        for retry in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[video_file, prompt]
+                )
+                break
+            except Exception as e:
+                if "precondition" in str(e).lower() and retry < max_retries - 1:
+                    logging.warning(f"Precondition error on attempt {retry + 1}, retrying after delay...")
+                    time.sleep(3 * (retry + 1))  # Increasing delay: 3s, 6s, 9s
+                else:
+                    raise
         
         # Parse response
         response_text = response.text.strip()
@@ -962,14 +1088,18 @@ def _generate_captions_gemini(
         # Cleanup uploaded file
         try:
             client.files.delete(name=video_file.name)
-        except Exception:
-            pass
+            logging.debug(f"Cleaned up Gemini file: {video_file.name}")
+        except Exception as e:
+            logging.warning(f"Failed to cleanup Gemini file: {e}")
         
         logging.info(f"Generated {len(captions)} captions")
         return CaptionResult(captions=captions, provider="gemini", success=True)
         
     except Exception as e:
         logging.error(f"Gemini caption generation failed: {e}")
+        logging.error(f"Error type: {type(e).__name__}")
+        if hasattr(e, '__cause__') and e.__cause__:
+            logging.error(f"Caused by: {e.__cause__}")
         return CaptionResult(captions=[], provider="gemini", success=False,
                            error=str(e))
 
@@ -1591,19 +1721,18 @@ def apply_tags_to_pycaps(
     captions: List[Caption],
     tag_results: dict,
     config_highlight_color: str = "#00ff88"
-) -> tuple:
-    """Generate PyCaps-compatible CSS and word lists from AI tags.
+) -> dict:
+    """Generate PyCaps-compatible word lists from AI tags.
     
-    This allows you to use free PyCaps wordlist rules with AI-generated tags.
+    This allows you to use PyCaps wordlist rules with AI-generated tags.
     
     Args:
         captions: Original captions
         tag_results: Dict from batch_tag_captions()
-        config_highlight_color: Color for highlighted words
+        config_highlight_color: Unused (kept for backward compatibility)
         
     Returns:
-        Tuple of (custom_css, word_lists_dict)
-        word_lists_dict can be passed to pycaps SemanticTagger.add_wordlist_rule()
+        word_lists_dict that can be passed to pycaps SemanticTagger.add_wordlist_rule()
     """
     all_action = set()
     all_emphasis = set()
@@ -1616,36 +1745,6 @@ def apply_tags_to_pycaps(
         all_emotion.update(result.emotion_words)
         all_product.update(result.product_words)
     
-    # Generate custom CSS for each tag type
-    custom_css = f"""
-/* Action words - bold and colored */
-.tag-action {{
-    color: #FF4444 !important;
-    font-weight: 900;
-    text-transform: uppercase;
-}}
-
-/* Emphasis words - highlighted background */
-.tag-emphasis {{
-    background-color: {config_highlight_color};
-    color: #FFFFFF !important;
-    padding: 2px 6px;
-    border-radius: 4px;
-}}
-
-/* Emotion words - slightly larger */
-.tag-emotion {{
-    color: #FFD700 !important;
-    font-size: 110%;
-}}
-
-/* Product/game names - distinct styling */
-.tag-product {{
-    color: #00BFFF !important;
-    font-style: italic;
-}}
-"""
-    
     word_lists = {
         "action": list(all_action),
         "emphasis": list(all_emphasis),
@@ -1653,7 +1752,7 @@ def apply_tags_to_pycaps(
         "product": list(all_product)
     }
     
-    return custom_css, word_lists
+    return word_lists
 
 
 def add_emojis_to_caption(caption_text: str, tag_result: SemanticTagResult) -> str:

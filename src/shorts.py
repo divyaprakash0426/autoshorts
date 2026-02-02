@@ -117,10 +117,10 @@ def _save_debug_checkpoint(
             for s, score, category in ai_ranked
         ]
     
-    # Convert rendered clips
+    # Convert rendered clips (include render_meta)
     rendered_clips_data = None
     if rendered_clips:
-        rendered_clips_data = [(str(p), cat) for p, cat in rendered_clips]
+        rendered_clips_data = [(str(p), cat, meta) for p, cat, meta in rendered_clips]
     
     checkpoint = {
         "video_file": str(video_file),
@@ -172,7 +172,7 @@ def _load_debug_checkpoint(video_file: Path) -> Optional[dict]:
     
     if checkpoint.get("rendered_clips"):
         checkpoint["rendered_clips"] = [
-            (Path(p), cat) for p, cat in checkpoint["rendered_clips"]
+            (Path(p), cat, meta) for p, cat, meta in checkpoint["rendered_clips"]
         ]
     
     logging.info(f"[DEBUG] Loaded checkpoint from: {checkpoint_path}")
@@ -1896,10 +1896,10 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
                     if is_subtitles_enabled() and rendered_clips:
                         logging.info(f"[DEBUG] Generating subtitles for {len(rendered_clips)} clips...")
                         
-                        for clip_path, detected_category in rendered_clips:
+                        for clip_path, detected_category, render_meta in rendered_clips:
                             try:
                                 subtitled_path = clip_path.with_stem(clip_path.stem + "_sub")
-                                result = generate_subtitles(clip_path, subtitled_path, detected_category)
+                                result = generate_subtitles(clip_path, subtitled_path, detected_category, render_meta=render_meta)
                                 
                                 if result and result.exists():
                                     # Replace original with subtitled version
@@ -2134,8 +2134,9 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
             logging.info("AI analysis disabled or no scenes. Using heuristic ranking.")
         final_scene_list = sorted_processed_scene_list[:config.scene_limit]
 
-    # Track rendered clips with their detected categories for subtitle processing
-    rendered_clips: List[Tuple[Path, str]] = []  # (clip_path, detected_category)
+    # Track rendered clips with their detected categories and render metadata for subtitle/TTS processing
+    # Format: (clip_path, detected_category, render_meta_dict)
+    rendered_clips: List[Tuple[Path, str, Optional[dict]]] = []
 
     if final_scene_list:
         for i, scene in enumerate(final_scene_list):
@@ -2177,11 +2178,26 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
                 max_error_depth=config.max_error_depth,
             )
             
-            # Track for subtitle processing with detected category
+            # Track for subtitle processing with detected category and render metadata
             if render_path.exists():
                 scene_key = scene[0].get_seconds()
                 category = scene_categories.get(scene_key, "action")
-                rendered_clips.append((render_path, category))
+                # Store render params as dict for potential TTS re-rendering
+                render_meta = {
+                    "source_path": str(params.source_path),
+                    "start_time": params.start_time,
+                    "duration": params.duration,
+                    "output_width": params.output_width,
+                    "output_height": params.output_height,
+                    "crop_x": params.crop_x,
+                    "crop_y": params.crop_y,
+                    "crop_w": params.crop_w,
+                    "crop_h": params.crop_h,
+                    "bg_width": params.bg_width,
+                    "bg_height": params.bg_height,
+                    "is_vertical_bg": params.is_vertical_bg,
+                }
+                rendered_clips.append((render_path, category, render_meta))
     else:
         # No scenes found, fallback to random clip
         short_length = random.randint(
@@ -2213,7 +2229,21 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
         )
         
         if render_path.exists():
-            rendered_clips.append((render_path, "action"))
+            render_meta = {
+                "source_path": str(params.source_path),
+                "start_time": params.start_time,
+                "duration": params.duration,
+                "output_width": params.output_width,
+                "output_height": params.output_height,
+                "crop_x": params.crop_x,
+                "crop_y": params.crop_y,
+                "crop_w": params.crop_w,
+                "crop_h": params.crop_h,
+                "bg_width": params.bg_width,
+                "bg_height": params.bg_height,
+                "is_vertical_bg": params.is_vertical_bg,
+            }
+            rendered_clips.append((render_path, "action", render_meta))
 
     # ==========================================================================
     # DEBUG: Save checkpoint before subtitle generation
@@ -2262,12 +2292,20 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
                             clip_path = segment.clip_path
                             subtitled_path = clip_path.with_stem(clip_path.stem + "_sub")
                             
+                            # Find render_meta for this clip
+                            clip_render_meta = None
+                            for path, _, meta in rendered_clips:
+                                if path == clip_path:
+                                    clip_render_meta = meta
+                                    break
+                            
                             # Generate subtitles with pre-generated narration
                             result = generate_subtitles(
                                 clip_path, 
                                 subtitled_path, 
                                 segment.detected_category,
-                                story_narration=segment.narration_text
+                                story_narration=segment.narration_text,
+                                render_meta=clip_render_meta
                             )
                             
                             if result and result.exists():
@@ -2289,10 +2327,10 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
         
         # Regular per-clip subtitle generation (non-story modes or fallback)
         if not (mode == "ai_captions" and caption_style and caption_style.startswith("story_")):
-            for clip_path, detected_category in rendered_clips:
+            for clip_path, detected_category, render_meta in rendered_clips:
                 try:
                     subtitled_path = clip_path.with_stem(clip_path.stem + "_sub")
-                    result = generate_subtitles(clip_path, subtitled_path, detected_category)
+                    result = generate_subtitles(clip_path, subtitled_path, detected_category, render_meta=render_meta)
                     
                     if result and result.exists():
                         # Replace original with subtitled version

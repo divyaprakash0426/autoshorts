@@ -111,8 +111,8 @@ def get_schema() -> List[EnvSection]:
                     options=["tiny", "base", "small", "medium", "large"],
                     help_text="Speech recognition model. Larger = more accurate but slower",
                 ),
-                EnvField("MAX_CAPTIONS", "Max captions", "int", 8, min_value=1, max_value=30,
-                         help_text="Maximum number of caption lines per clip"),
+                EnvField("MAX_CAPTIONS", "Max captions", "int", 0, min_value=0, max_value=50,
+                         help_text="Maximum captions per clip. 0 = Auto (dynamic based on video duration)"),
                 EnvField(
                     "PYCAPS_TEMPLATE",
                     "PyCaps template",
