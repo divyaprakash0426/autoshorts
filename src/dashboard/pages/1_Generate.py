@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -64,136 +65,131 @@ def render() -> None:
     col_left, col_right = st.columns([1, 1])
     
     with col_left:
-        # Video selection
-        st.markdown("### 🎮 Source Video")
-        
+
+        # Video Queue Management
+        st.markdown("### 🎬 Video Queue")
+
+        # Directories
+        gameplay_dir = Path("gameplay")
+        disabled_dir = gameplay_dir / ".disabled"
+        disabled_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get list of active and disabled videos
+        gameplay_videos = list_videos(gameplay_dir)
+        disabled_videos_list = list_videos(disabled_dir)
+
+        # Display current queue
+        queue_container = st.container()
         if gameplay_videos:
-            options = {info.path.name: info for info in gameplay_videos}
-            selection = st.selectbox(
-                "Select gameplay video",
-                options=list(options.keys()),
-                label_visibility="collapsed"
-            )
-            selected = options[selection]
-            st.session_state.selected_gameplay = selected.path
+            st.info(f"📁 {len(gameplay_videos)} video(s) in active queue (will be processed)")
             
-            # Video preview card
-            with st.container():
-                if selected.thumbnail:
-                    st.image(str(selected.thumbnail), use_container_width=True)
-                
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Duration", f"{selected.duration:.0f}s")
-                col2.metric("Size", f"{selected.size_mb:.1f} MB")
-                col3.metric("Resolution", selected.resolution or "N/A")
-        else:
-            st.warning("📁 No videos found in `./gameplay`")
-            st.caption("Add your gameplay videos to the `gameplay/` folder or upload one below.")
-        
-        # Video upload / browse option
-        with st.expander("📤 Add Video", expanded=not gameplay_videos):
-            st.caption("Select a video to add to the gameplay folder")
-            
-            # Initialize session state for selected path
-            if "selected_video_path" not in st.session_state:
-                st.session_state.selected_video_path = ""
-            
-            col_input, col_browse = st.columns([3, 1])
-            
-            with col_browse:
-                browse_clicked = st.button("📂 Browse", use_container_width=True, help="Open file browser")
-            
-            # Handle browse button click - open file dialog
-            if browse_clicked:
-                try:
-                    import tkinter as tk
-                    from tkinter import filedialog
-                    root = tk.Tk()
-                    root.withdraw()
-                    root.attributes('-topmost', True)
-                    root.focus_force()
-                    file_path = filedialog.askopenfilename(
-                        title="Select Video File",
-                        filetypes=[
-                            ("Video files", "*.mp4 *.mkv *.avi *.mov *.webm *.m4v"),
-                            ("All files", "*.*")
-                        ]
-                    )
-                    root.destroy()
-                    if file_path:
-                        st.session_state.selected_video_path = file_path
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Could not open file browser: {e}")
-                    st.caption("Please paste the full file path below")
-            
-            with col_input:
-                # Use on_change to sync input with session state
-                def update_path():
-                    st.session_state.selected_video_path = st.session_state.video_path_input
-                
-                video_path = st.text_input(
-                    "Video path",
-                    value=st.session_state.selected_video_path,
-                    placeholder="Click Browse or paste path here",
-                    label_visibility="collapsed",
-                    key="video_path_input",
-                    on_change=update_path
-                )
-            
-            # Show the current selected path for confirmation
-            if st.session_state.selected_video_path:
-                st.caption(f"📁 Selected: `{Path(st.session_state.selected_video_path).name}`")
-            
-            # Add button
-            add_clicked = st.button(
-                "➕ Add Video", 
-                type="primary", 
-                use_container_width=True, 
-                disabled=not st.session_state.selected_video_path,
-                help="Creates a link to the video (no copying, saves disk space)"
-            )
-            
-            if add_clicked and st.session_state.selected_video_path:
-                video_path = st.session_state.selected_video_path.strip()
-                source_path = Path(video_path)
-                
-                # Debug info
-                st.info(f"Attempting to link: {source_path}")
-                
-                if not source_path.exists():
-                    st.error(f"❌ File not found: {video_path}")
-                elif not source_path.is_file():
-                    st.error(f"❌ Not a file: {video_path}")
-                else:
-                    gameplay_dir = Path("gameplay")
-                    gameplay_dir.mkdir(exist_ok=True)
+            # Show thumbnails grid
+            cols = st.columns(3)
+            for idx, vid in enumerate(gameplay_videos):
+                col = cols[idx % 3]
+                with col:
+                    if vid.thumbnail:
+                        st.image(str(vid.thumbnail), use_container_width=True)
+                    st.caption(f"**{vid.path.name}**")
+                    st.caption(f"⏱️ {vid.duration:.0f}s | 💾 {vid.size_mb:.1f}MB")
                     
-                    link_path = gameplay_dir / source_path.name
-                    
-                    if link_path.exists() or link_path.is_symlink():
-                        st.warning(f"⚠️ '{source_path.name}' already exists in gameplay folder")
-                    else:
+                    # Remove button (move to disabled)
+                    if st.button("❌ Remove", key=f"disable_{vid.path.name}", help="Move to disabled (does not delete file)"):
                         try:
-                            # Create symlink with absolute path
-                            abs_source = source_path.resolve()
-                            link_path.symlink_to(abs_source)
-                            
-                            # Verify symlink was created
-                            if link_path.exists() or link_path.is_symlink():
-                                st.success(f"✅ Added '{source_path.name}' to gameplay folder")
-                                st.session_state.selected_video_path = ""
-                                # Clear any cached video list
-                                if "video_list_cache" in st.session_state:
-                                    del st.session_state.video_list_cache
+                             dest_path = disabled_dir / vid.path.name
+                             vid.path.rename(dest_path)
+                             st.toast(f"Moved '{vid.path.name}' to disabled")
+                             st.rerun()
+                        except Exception as e:
+                             st.error(f"Failed to move: {e}")
+
+        else:
+            st.info("The queue is empty. Add a video to start.")
+
+        # Display Disabled / Staged Videos
+        if disabled_videos_list:
+            with st.expander(f"🚫 Disabled / Staged Videos ({len(disabled_videos_list)})", expanded=False):
+                st.caption("Videos hered are available but won't be processed.")
+                d_cols = st.columns(3)
+                for idx, vid in enumerate(disabled_videos_list):
+                    col = d_cols[idx % 3]
+                    with col:
+                        # Optional: thumbnail for disabled too? Yes.
+                        # if vid.thumbnail: st.image(str(vid.thumbnail), use_container_width=True)
+                        st.text(vid.path.name)
+                        if st.button("➕ Add back", key=f"enable_{vid.path.name}"):
+                            try:
+                                dest_path = gameplay_dir / vid.path.name
+                                vid.path.rename(dest_path)
+                                st.toast(f"Added '{vid.path.name}' back to queue")
                                 st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed to enable: {e}")
+
+        # Action Buttons
+        st.divider()
+        col_add, col_clear = st.columns([1, 1])
+        
+        with col_add:
+            if st.button("📂 Add Video", type="primary", use_container_width=True):
+                try:
+                    # Run the helper script to open file dialog
+                    result = subprocess.run(
+                        [sys.executable, "src/dashboard/utils/file_dialog_helper.py"],
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    
+                    if result.returncode == 0 and result.stdout.strip():
+                        source_path = Path(result.stdout.strip())
+                        if source_path.exists():
+                            gameplay_dir.mkdir(exist_ok=True)
+                            
+                            link_path = gameplay_dir / source_path.name
+                            if link_path.exists():
+                                st.warning(f"⚠️ '{source_path.name}' is already in the queue")
                             else:
-                                st.error("❌ Symlink creation failed silently")
-                        except PermissionError:
-                            st.error("❌ Permission denied. Try running with administrator privileges.")
-                        except OSError as e:
-                            st.error(f"❌ Failed to create link: {e}")
-                            st.caption("On Windows, you may need to enable Developer Mode or run as Administrator.")
+                                try:
+                                    link_path.symlink_to(source_path.resolve())
+                                    st.success(f"✅ Added to queue: {source_path.name}")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Failed to link video: {e}")
+                    else:
+                        if result.stderr:
+                             st.error(f"Dialog Error: {result.stderr}")
+                        
+                except Exception as e:
+                    st.error(f"Failed to open file dialog: {e}")
+        
+        with col_clear:
+            if st.button("🗑️ Clear Queue", type="secondary", use_container_width=True, disabled=not gameplay_videos):
+                cleaned_count = 0
+                moved_count = 0
+                for vid in gameplay_videos:
+                    try:
+                        if vid.path.is_symlink():
+                            vid.path.unlink()
+                            cleaned_count += 1
+                        else:
+                            # Move actual files to disabled instead of deleting!
+                            dest_path = disabled_dir / vid.path.name
+                            vid.path.rename(dest_path)
+                            moved_count += 1
+                    except Exception:
+                        pass
+                
+                msg = []
+                if cleaned_count > 0: msg.append(f"Removed {cleaned_count} links")
+                if moved_count > 0: msg.append(f"Moved {moved_count} files to disabled")
+                
+                if msg:
+                    st.success(", ".join(msg))
+                    st.rerun()
+                else:
+                    st.warning("Queue already empty")
+
         
         st.divider()
         
@@ -334,7 +330,7 @@ def render() -> None:
         if st.button(
             "▶️ Start Processing",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=start_disabled
         ):
             save_env_values(values, extras)
@@ -351,7 +347,7 @@ def render() -> None:
         if st.button(
             "⏹️ Stop",
             type="secondary",
-            use_container_width=True,
+            width="stretch",
             disabled=stop_disabled
         ):
             manager.stop()
@@ -375,7 +371,8 @@ def render() -> None:
     render_logs(status.tail, show_all=show_all)
 
     # Auto-refresh while running
-    if status.running:
+    # Auto-refresh while running (only if not viewing full logs)
+    if status.running and not show_all:
         import time
         time.sleep(2)
         st.rerun()

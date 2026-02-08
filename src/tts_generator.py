@@ -585,6 +585,23 @@ def get_video_duration(video_path: Path) -> float:
         return 0.0
 
 
+def _video_has_audio_stream(video_path: Path) -> bool:
+    """Check if video file has an audio stream using ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "csv=p=0",
+        str(video_path)
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        # If output contains "audio", there's an audio stream
+        return "audio" in result.stdout.strip().lower()
+    except Exception:
+        return False
+
+
 def extend_video_with_tpad(
     video_path: Path,
     output_path: Path,
@@ -771,27 +788,46 @@ def mix_audio_with_video(
                 if extend_video_with_tpad(video_path, extended_video_tmp, audio_duration + 0.5):
                     working_video = extended_video_tmp
     
-    # FFmpeg command to mix audio tracks
-    # - Use duration=longest to preserve TTS when it's longer than video
-    # - When video is extended/re-rendered, this still works correctly
-    filter_complex = (
-        f"[0:a]volume={game_audio_volume}[game];"
-        f"[1:a]volume={voiceover_volume}[voice];"
-        "[game][voice]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
-    )
+    # Check if video has audio stream BEFORE deciding which command to use
+    # PyCaps outputs typically have NO audio stream
+    has_audio = _video_has_audio_stream(working_video)
     
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(working_video),
-        "-i", str(voiceover_path),
-        "-filter_complex", filter_complex,
-        "-map", "0:v",
-        "-map", "[aout]",
-        "-c:v", "copy",  # Copy video stream (already encoded)
-        "-c:a", "aac",
-        "-b:a", "192k",
-        str(output_path)
-    ]
+    if has_audio:
+        # FFmpeg command to mix audio tracks
+        # - Use duration=longest to preserve TTS when it's longer than video
+        filter_complex = (
+            f"[0:a]volume={game_audio_volume}[game];"
+            f"[1:a]volume={voiceover_volume}[voice];"
+            "[game][voice]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+        )
+        
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(working_video),
+            "-i", str(voiceover_path),
+            "-filter_complex", filter_complex,
+            "-map", "0:v",
+            "-map", "[aout]",
+            "-c:v", "copy",  # Copy video stream (already encoded)
+            "-c:a", "aac",
+            "-b:a", "192k",
+            str(output_path)
+        ]
+    else:
+        # Video has no audio stream (e.g., PyCaps output)
+        # Simply add TTS as the only audio track
+        logging.info("Video has no audio stream, adding TTS as only audio track")
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(working_video),
+            "-i", str(voiceover_path),
+            "-map", "0:v",
+            "-map", "1:a",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            str(output_path)
+        ]
     
     try:
         result = subprocess.run(
@@ -810,7 +846,7 @@ def mix_audio_with_video(
                     pass
         
         if result.returncode != 0:
-            logging.error(f"FFmpeg audio mix failed: {result.stderr[:200]}")
+            logging.error(f"FFmpeg audio mix failed: {result.stderr[:500]}")
             return False
         
         return output_path.exists()

@@ -336,7 +336,7 @@ class GeminiAnalyzer(SemanticAnalyzer):
     
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY", "")
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
         self._client = None
     
     def is_available(self) -> bool:
@@ -525,6 +525,313 @@ Be honest with scores - if a clip is genuinely just normal action, that's fine. 
             provider="gemini",
             raw_response=""
         )
+
+    def analyze_full_video(
+        self,
+        video_path: Path,
+        duration: float,
+        target_count: int = 15
+    ) -> List[Tuple[float, float, str, float]]:
+        """Analyze the entire video to find the best moments directly.
+
+        This method:
+        1. Downscales the video to a small proxy (low res, low fps)
+        2. Uploads the proxy to Gemini
+        3. Asks Gemini to return a list of JSON timestamps for top moments
+        4. Returns a list of (start, end, category, score) tuples
+
+        Args:
+            video_path: Path to the full source video
+            duration: Video duration in seconds
+            target_count: Number of moments to request
+
+        Returns:
+            List of (start_time, end_time, category, score)
+        """
+        if not self.is_available():
+            logging.warning("Gemini API key not configured. Returning empty list.")
+            return []
+
+        # 1. Create a low-res proxy
+        import cv2
+        import numpy as np
+        import subprocess
+
+        logging.info(f"🚀 Starting Gemini Deep Analysis (Targeting ~{target_count} moments)...")
+
+        # Create temp file for proxy
+        import tempfile
+        import hashlib
+        
+        # Generate hash based on file path and size/mtime to ensure uniqueness per video
+        video_hash = hashlib.md5(f"{video_path}_{video_path.stat().st_size}".encode()).hexdigest()[:10]
+        # Clean filename for safety but keep extension
+        clean_name = "".join(c for c in video_path.stem if c.isalnum() or c in ('-', '_'))[:30]
+        temp_proxy = Path(tempfile.gettempdir()) / f"proxy_{clean_name}_{video_hash}.mp4"
+        
+        # Try to use GPU-accelerated encoding if available (much faster)
+        # Using hevc_nvenc for fast encoding, scale_cuda for GPU resizing
+        gpu_cmd = [
+            "ffmpeg", "-y",
+            "-hwaccel", "cuda",
+            "-hwaccel_output_format", "cuda",
+            "-i", str(video_path),
+            "-vf", "scale_cuda=640:-2,fps=1", # 1fps on GPU
+            "-c:v", "hevc_nvenc",
+            "-preset", "fast",
+            "-rc", "constqp",
+            "-qp", "35", # High compression
+            "-c:a", "aac", "-b:a", "32k", "-ac", "1",
+            str(temp_proxy)
+        ]
+        
+        # Fallback to CPU if GPU fails
+        cpu_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-vf", "scale=-2:480,fps=1",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "30",
+            "-c:a", "aac", "-b:a", "32k", "-ac", "1",
+            str(temp_proxy)
+        ]
+
+        if temp_proxy.exists() and temp_proxy.stat().st_size > 1024:
+            logging.info(f"Using cached proxy: {temp_proxy}")
+        else:
+            logging.info(f"Generating low-res proxy for AI analysis: {temp_proxy}")
+            import time
+            from tqdm import tqdm
+            import re
+            
+            # Helper to get video duration
+            def get_duration(path):
+                try:
+                    res = subprocess.run([
+                        "ffprobe", "-v", "error", "-show_entries", "format=duration", 
+                        "-of", "default=noprint_wrappers=1:nokey=1", str(path)
+                    ], capture_output=True, text=True)
+                    return float(res.stdout.strip())
+                except:
+                    return 0
+            
+            total_duration = get_duration(video_path)
+            
+            start_time = time.time()
+            # RegEx to capture time=HH:MM:SS.mm
+            time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})")
+            
+            # Try GPU first with progress
+            try:
+                # Add -progress pipe:1 to get progress info on stdout/stderr
+                # But typically reading stderr for `time=` is easier/cross-platform compatible
+                cmd = gpu_cmd
+                
+                logging.info(f"Rendering proxy with GPU (Duration: {total_duration:.1f}s)...")
+                
+                process = subprocess.Popen(
+                    cmd,
+                    stderr=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    universal_newlines=True
+                )
+                
+                # Progress bar
+                pbar = tqdm(total=total_duration, unit="s", desc="Generating Proxy", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}]")
+                
+                for line in process.stderr:
+                    match = time_pattern.search(line)
+                    if match:
+                        hours, minutes, seconds = map(float, match.groups())
+                        current_time = hours * 3600 + minutes * 60 + seconds
+                        pbar.n = min(current_time, total_duration)
+                        pbar.refresh()
+                
+                process.wait()
+                pbar.close()
+                
+                if process.returncode != 0:
+                    logging.warning("GPU proxy generation returned non-zero exit code")
+                    raise subprocess.CalledProcessError(process.returncode, cmd)
+                    
+                logging.info(f"GPU Proxy generation took {time.time() - start_time:.1f}s")
+                
+            except (subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
+                logging.warning(f"GPU proxy generation failed ({e}), falling back to CPU...")
+                # Fallback to CPU with progress
+                try:
+                    cmd = cpu_cmd
+                    process = subprocess.Popen(
+                        cmd,
+                        stderr=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        universal_newlines=True
+                    )
+                    
+                    pbar = tqdm(total=total_duration, unit="s", desc="Generating Proxy (CPU)", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}]")
+                    
+                    for line in process.stderr:
+                        match = time_pattern.search(line)
+                        if match:
+                            hours, minutes, seconds = map(float, match.groups())
+                            current_time = hours * 3600 + minutes * 60 + seconds
+                            pbar.n = min(current_time, total_duration)
+                            pbar.refresh()
+                    
+                    process.wait()
+                    pbar.close()
+                    
+                    if process.returncode != 0:
+                        raise subprocess.CalledProcessError(process.returncode, cmd)
+                        
+                    logging.info(f"CPU Proxy generation took {time.time() - start_time:.1f}s")
+                    
+                except subprocess.CalledProcessError as e:
+                    logging.error(f"Failed to generate proxy video: {e}")
+                    return []
+
+        # 2. Upload to Gemini
+        client = self._get_client()
+        uploaded_file = None
+        
+        try:
+            logging.info(f"Uploading proxy ({temp_proxy.stat().st_size / 1024 / 1024:.1f} MB) to Gemini...")
+            with open(temp_proxy, "rb") as f:
+                uploaded_file = client.files.upload(
+                    file=f,
+                    config={"mime_type": "video/mp4"}
+                )
+
+            # Poll for active
+            while True:
+                file_status = client.files.get(name=uploaded_file.name)
+                if file_status.state.name == "ACTIVE":
+                    break
+                elif file_status.state.name == "FAILED":
+                    raise RuntimeError("Gemini processing failed")
+                time.sleep(2)
+            
+            logging.info("Proxy processing complete. Prompting Gemini...")
+
+            # 3. Prompt for timestamps
+            categories_list = "\n".join(
+                f"- {cat.upper()}: {desc}" 
+                for cat, desc in ClipScore.SEMANTIC_TYPES.items()
+            )
+
+            prompt = f"""You are a professional video editor creating viral shorts.
+Your task is to watch this entire video and identify the ABSOLUTE BEST moments.
+
+CATEGORIES:
+{categories_list}
+
+INSTRUCTIONS:
+1. Find {target_count} distinct, high-quality moments.
+2. For each moment, provide the EXACT start and end timestamps (MM:SS).
+3. Assign a 'score' (0.0 to 1.0) based on how viral/engaging it is.
+4. Assign a 'category' from the list above.
+
+IMPORTANT:
+- Focus on moments that stand out (kills, funny fails, laughs, glitches, hypes).
+- Ignore boring travel or looting.
+- Clips should be 15-60 seconds long.
+- Return ONLY valid JSON.
+
+JSON FORMAT:
+{{
+    "moments": [
+        {{ "start": "04:20", "end": "04:50", "category": "funny", "score": 0.95, "reason": "Streamer laughs at glitch" }},
+        {{ "start": "12:15", "end": "12:45", "category": "skill", "score": 0.88, "reason": "Triple kill" }}
+    ]
+}}
+"""
+            # Use client.models.generate_content instead of client.GenerativeModel
+            from google.api_core import exceptions
+            
+            max_retries = 5
+            base_delay = 2
+            response = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = client.models.generate_content(
+                        model=self.model_name,
+                        contents=[uploaded_file, prompt]
+                    )
+                    break
+                except (exceptions.ServiceUnavailable, exceptions.ResourceExhausted) as e:
+                    if attempt == max_retries - 1:
+                        logging.error(f"Gemini API failed after {max_retries} attempts: {e}")
+                        raise e
+                    
+                    delay = base_delay * (2 ** attempt)
+                    logging.warning(f"Gemini API overloaded (503/429), retrying in {delay}s... (Attempt {attempt+1}/{max_retries})")
+                    time.sleep(delay)
+                except Exception as e:
+                    logging.error(f"Gemini API unexpected error: {e}")
+                    raise e
+            
+            # 4. Parse response
+            text = response.text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+            
+            data = json.loads(text)
+            moments = data.get("moments", [])
+            
+            # Convert MM:SS to seconds
+            parsed_moments = []
+            
+            def time_str_to_seconds(t_str):
+                parts = list(map(int, t_str.split(":")))
+                if len(parts) == 2:
+                    return parts[0] * 60 + parts[1]
+                elif len(parts) == 3:
+                    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+                return 0
+
+            for m in moments:
+                try:
+                    start_str = m["start"]
+                    end_str = m["end"]
+                    
+                    start_sec = time_str_to_seconds(start_str)
+                    end_sec = time_str_to_seconds(end_str)
+                    
+                    if end_sec > start_sec:
+                        parsed_moments.append((
+                            float(start_sec),
+                            float(end_sec),
+                            m["category"].lower(),
+                            float(m["score"])
+                        ))
+                except Exception as e:
+                    logging.warning(f"Failed to parse moment {m}: {e}")
+            
+            logging.info(f"Gemini found {len(parsed_moments)} notable moments.")
+            return parsed_moments
+
+        except Exception as e:
+            logging.error(f"Deep Analysis failed: {e}")
+            return []
+        finally:
+            # Cleanup
+            if uploaded_file:
+                try:
+                    client.files.delete(name=uploaded_file.name)
+                except:
+                    pass
+            # Don't delete cached proxy to speed up re-runs? 
+            # Ideally we should clean it up, but for dev speed let's keep it if small?
+            # No, let's clean up to avoid filling /tmp
+            if temp_proxy.exists():
+                try:
+                    temp_proxy.unlink()
+                except:
+                    pass
 
 
 
@@ -878,10 +1185,26 @@ class CaptionResult:
     error: str = ""
 
 
+# Language name mapping for caption/narration prompts
+LANGUAGE_NAMES = {
+    "en": "English",
+    "zh": "Chinese (Mandarin)",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "de": "German",
+    "fr": "French",
+    "ru": "Russian",
+    "pt": "Portuguese",
+    "es": "Spanish",
+    "it": "Italian",
+}
+
+
 def generate_ai_captions(
     video_path: Path,
     style: str = "gaming",
     max_captions: int = 8,
+    language: str = None,
 ) -> CaptionResult:
     """Generate AI-powered captions for a video clip.
     
@@ -893,24 +1216,32 @@ def generate_ai_captions(
         video_path: Path to the video clip
         style: Caption style - "gaming", "dramatic", "funny", "minimal"
         max_captions: Maximum number of captions to generate
+        language: Language code (en, ja, ko, etc.) - defaults to TTS_LANGUAGE env var
         
     Returns:
         CaptionResult with list of Caption objects
     """
+    # Get language from parameter or environment
+    if language is None:
+        language = os.getenv("TTS_LANGUAGE", "en")
+    
     provider = os.getenv("AI_PROVIDER", "gemini").lower()
     
     if provider == "openai":
-        return _generate_captions_openai(video_path, style, max_captions)
+        return _generate_captions_openai(video_path, style, max_captions, language)
     elif provider == "local":
         logging.warning("AI captions not available in local mode")
         return CaptionResult(captions=[], provider="local", success=False, 
                            error="AI captions require Gemini or OpenAI")
     else:  # Default to Gemini
-        return _generate_captions_gemini(video_path, style, max_captions)
+        return _generate_captions_gemini(video_path, style, max_captions, language)
 
 
-def _get_caption_prompt(style: str, max_captions: int, duration: float) -> str:
+def _get_caption_prompt(style: str, max_captions: int, duration: float, language: str = "en") -> str:
     """Generate the prompt for AI caption generation."""
+    
+    # Get full language name
+    lang_name = LANGUAGE_NAMES.get(language, "English")
     
     # Story modes use fewer but longer captions (but not as aggressively capped)
     is_story_mode = style.startswith("story_")
@@ -964,10 +1295,20 @@ Write 2-3 sentences per caption. Epic tone, powerful delivery, movie trailer sty
     caption_duration = "4-8 seconds" if is_story_mode else "1-3 seconds"
     caption_type = "narrative segments" if is_story_mode else "short captions"
     
+    # Language instruction
+    if language != "en":
+        language_instruction = f"""\n\nLANGUAGE REQUIREMENT:
+- Generate ALL caption text in {lang_name}.
+- Adapt the style examples to be culturally appropriate for {lang_name} speakers.
+- Use natural {lang_name} expressions and slang where appropriate.
+- Do NOT translate literally - create authentic {lang_name} content."""
+    else:
+        language_instruction = ""
+    
     return f"""Watch this gameplay video and generate {max_captions} {caption_type} for key moments.
 
 STYLE GUIDE:
-{style_guide}
+{style_guide}{language_instruction}
 
 VIDEO DURATION: {duration:.1f} seconds
 
@@ -992,7 +1333,8 @@ The "style" field should be one of: "action", "humor", "tension", "emphasis", "n
 def _generate_captions_gemini(
     video_path: Path, 
     style: str, 
-    max_captions: int
+    max_captions: int,
+    language: str = "en"
 ) -> CaptionResult:
     """Generate captions using Gemini API."""
     
@@ -1060,7 +1402,7 @@ def _generate_captions_gemini(
         else:
             raise RuntimeError(f"Gemini file processing timed out after {max_wait}s")
         
-        prompt = _get_caption_prompt(style, max_captions, duration)
+        prompt = _get_caption_prompt(style, max_captions, duration, language)
         
         # Add extra delay before using the file to ensure it's fully ready
         time.sleep(1)
@@ -1107,7 +1449,8 @@ def _generate_captions_gemini(
 def _generate_captions_openai(
     video_path: Path, 
     style: str, 
-    max_captions: int
+    max_captions: int,
+    language: str = "en"
 ) -> CaptionResult:
     """Generate captions using OpenAI API (via keyframe extraction)."""
     
@@ -1155,7 +1498,7 @@ def _generate_captions_openai(
                                error="Failed to extract frames")
         
         # Build message
-        prompt = _get_caption_prompt(style, max_captions, duration)
+        prompt = _get_caption_prompt(style, max_captions, duration, language)
         prompt += f"\n\nThese {len(frames)} frames are evenly spaced across the {duration:.1f}s video."
         
         content = [{"type": "text", "text": prompt}]

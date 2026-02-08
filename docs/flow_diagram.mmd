@@ -1,38 +1,83 @@
 flowchart TD
-  Start[Start - Input Video] --> Analysis[Video Analysis & Scene Extraction<br/>Heuristic scoring + AI ranking]
-  Analysis --> Provider{AI_PROVIDER}
+  Start[Start - Input Video] --> AnalysisMode{GEMINI_DEEP_ANALYSIS?}
+  
+  %% Deep Analysis Path
+  AnalysisMode -->|Yes| DeepAnalysis["🧠 Deep Analysis Mode<br/>Gemini scans full video<br/>Finds highlight moments directly"]
+  
+  %% Heuristics Path
+  AnalysisMode -->|No| Analysis[Video Analysis & Scene Extraction<br/>scenes + audio/video heuristics]
+  Analysis --> HeuristicRank["Heuristic Scoring<br/>scene_action_score()"]
+  HeuristicRank --> AIRank{AI_ANALYSIS_ENABLED?}
+  AIRank -->|Yes| SemanticRank["AI Semantic Ranking<br/>rank_scenes_with_ai()"]
+  AIRank -->|No| SelectScenes
+  SemanticRank --> SelectScenes
+  
+  DeepAnalysis --> SelectScenes[Select Top Candidates<br/>Diverse category selection]
+  
+  %% Provider Decision
+  SelectScenes --> Provider{AI_PROVIDER}
   Provider -->|local qwen3vl| LocalPregen["Local pre-gen<br/>captions & story narration<br/>Quantized 4B FP8 model"]
   Provider -->|remote openai/gemini| RemoteSkip["Remote provider<br/>on-demand captions"]
   LocalPregen --> Unload["Unload vision models<br/>free VRAM for TTS"]
   RemoteSkip --> Unload
+  
   Unload --> Render[Render clips<br/>GPU NVENC encoding<br/>Random length within min/max bounds]
   Render --> SubToggle{ENABLE_SUBTITLES?}
   
-  %% Subtitles ON path
-  SubToggle -->|Yes| SubPipeline[generate_subtitles]
+  %% ========================================
+  %% SUBTITLES ON (with Story Mode Fix)
+  %% ========================================
+  SubToggle -->|Yes| SubPipeline["generate_subtitles()"]
   SubPipeline --> SubtitleMode{SUBTITLE_MODE}
   SubtitleMode -->|speech| Whisper[Whisper transcribe -> SRT]
   SubtitleMode -->|ai_captions| AIGen[AI captions -> SRT]
-  SubtitleMode -->|story_*| StoryCheck{ENABLE_TTS?}
-  StoryCheck -->|Yes| StoryMergedProbe["Probe MERGED narration TTS<br/>Single continuous audio measurement<br/>Distribute timing proportionally"]
-  StoryCheck -->|No| StoryWordEst["Word-count estimate<br/>for subtitle timing"]
-  Whisper --> ApplyPyCaps[apply_pycaps_subtitles<br/>PyCaps template rendering]
-  AIGen --> ApplyPyCaps
-  StoryMergedProbe --> ApplyPyCaps
-  StoryWordEst --> ApplyPyCaps
-  ApplyPyCaps --> SubTTSDecision{ENABLE_TTS?}
-  SubTTSDecision -->|Yes| SubTTSGen["Generate TTS for captions<br/>Story: ONE continuous audio<br/>Normal: per-caption with gaps"]
-  SubTTSDecision -->|No| SubOnly[Return subtitled clip]
-  SubTTSGen --> SubReRenderCheck{TTS > clip + 1.5s?}
-  SubReRenderCheck -->|Yes| SubReRender["Re-render clip longer<br/>using source video<br/>Beyond scene boundaries OK"]
-  SubReRenderCheck -->|No| SubTpadCheck{TTS > clip?}
-  SubTpadCheck -->|Yes| SubTpad["tpad: freeze last frame<br/>extend video to match TTS"]
-  SubTpadCheck -->|No| SubMix[Mix audio]
-  SubReRender --> SubMix
-  SubTpad --> SubMix
-  SubMix --> Final
+  SubtitleMode -->|story_*| StoryNarration["generate_unified_story()<br/>AI creates narrative arc"]
   
-  %% Subtitles OFF path
+  %% Story Mode - TTS First Flow (NEW!)
+  StoryNarration --> TTSFirst{ENABLE_TTS?}
+  TTSFirst -->|Yes| StoryTTSGen["🎙️ Generate TTS FIRST<br/>Qwen3-TTS VoiceDesign<br/>Measure actual audio durations"]
+  TTSFirst -->|No| StoryWordEst["Word-count estimate<br/>for subtitle timing"]
+  
+  StoryTTSGen --> CheckDuration{"TTS > Video + 1s?"}
+  CheckDuration -->|Yes| ExtendVideo["📐 Re-render Video BEFORE PyCaps<br/>Extend to TTS duration<br/>from source (render_meta)"]
+  CheckDuration -->|No| UseOriginalVideo["Use original video<br/>for PyCaps"]
+  
+  ExtendVideo --> ApplyPyCaps
+  UseOriginalVideo --> ApplyPyCaps
+  StoryWordEst --> ApplyPyCaps
+  
+  Whisper --> ApplyPyCaps[apply_pycaps_subtitles<br/>PyCaps template rendering<br/>Output: .mp4]
+  AIGen --> ApplyPyCaps
+  
+  %% PyCaps Detection Flow
+  ApplyPyCaps --> PyCapsDetect["Detect PyCaps output<br/>Check: output_path, SRT-based _sub.mp4,<br/>video-based _sub.mp4"]
+  PyCapsDetect --> PyCapsOK{Output found?}
+  PyCapsOK -->|No| FFmpegFallback["FFmpeg subtitle burn-in<br/>(fallback mode)"]
+  PyCapsOK -->|Yes| SubTTSDecision
+  FFmpegFallback --> SubTTSDecision
+  
+  SubTTSDecision{Story TTS pre-generated?}
+  SubTTSDecision -->|Yes| StoryMix["Mix pre-generated TTS<br/>No re-render needed<br/>(already extended)"]
+  SubTTSDecision -->|No, captions| CaptionTTSGen["Generate TTS per caption<br/>with timing gaps"]
+  SubTTSDecision -->|No TTS| SubOnly[Return subtitled clip]
+  
+  %% Normal TTS mixing (non-story)
+  CaptionTTSGen --> CaptionDurCheck{TTS > clip?}
+  CaptionDurCheck -->|Yes| CaptionTpad["tpad: freeze last frame<br/>extend video"]
+  CaptionDurCheck -->|No| CaptionMix
+  CaptionTpad --> CaptionMix
+  
+  %% Audio Mix
+  StoryMix --> AudioMixCheck{"Video has audio?"}
+  CaptionMix --> AudioMixCheck
+  AudioMixCheck -->|Yes| MixWithGame["amix: blend game audio + TTS"]
+  AudioMixCheck -->|No| AddTTSOnly["Add TTS as only audio track"]
+  MixWithGame --> Final
+  AddTTSOnly --> Final
+  
+  %% ========================================
+  %% SUBTITLES OFF path
+  %% ========================================
   SubToggle -->|No| TTSOnlyToggle{ENABLE_TTS?}
   TTSOnlyToggle -->|Yes| TTSOnly[TTS-only path]
   TTSOnly --> PregenCheck{Preloaded content?}
@@ -57,10 +102,21 @@ flowchart TD
   SubOnly --> Final
   NoAudio --> Final
   
-  %% TTS Processing Details
-  TTSDetails["TTS Processing:<br/>• Qwen3-TTS VoiceDesign<br/>• FlashAttention 2 optimized<br/>• Story: continuous merged audio<br/>• Normal: per-caption with timing<br/>• Voice design from natural language"]
-  Final --> TTSDetails
+  %% Legend & Notes
+  subgraph Legend["🎯 Key Updates"]
+    direction LR
+    L1["📐 Story Mode: TTS generated FIRST"]
+    L2["📐 Video extended BEFORE PyCaps"]
+    L3["🎙️ Subtitles rendered on full-length video"]
+    L4["✅ No subtitle loss during TTS mix"]
+  end
   
-  %% Notes
-  Notes["Key Optimizations:<br/>• VRAM management: unload models between phases<br/>• Story subtitle timing synced with merged TTS<br/>• Re-render only if TTS > clip + 1.5s<br/>• tpad freeze-frame for small overages<br/>• Slang preprocessing: rn→right now, --→pause"]
-  TTSDetails --> Notes
+  Final --> Legend
+  
+  %% Styling
+  classDef newFlow fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+  classDef tts fill:#fff9c4,stroke:#f9a825
+  classDef decision fill:#fff3e0,stroke:#e65100
+  
+  class StoryTTSGen,ExtendVideo,CheckDuration,UseOriginalVideo newFlow
+  class QwenTTS,StoryMix,CaptionMix tts

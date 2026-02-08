@@ -30,15 +30,32 @@ class ClipNarration:
     clip_path: Path
 
 
+# Language name mapping for narration prompts
+LANGUAGE_NAMES = {
+    "en": "English",
+    "zh": "Chinese (Mandarin)",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "de": "German",
+    "fr": "French",
+    "ru": "Russian",
+    "pt": "Portuguese",
+    "es": "Spanish",
+    "it": "Italian",
+}
+
+
 def generate_unified_story(
     clips: List[Tuple[Path, str, Optional[dict]]],
-    story_style: str
+    story_style: str,
+    language: str = None,
 ) -> List[ClipNarration]:
     """Generate a unified narrative across multiple clips.
     
     Args:
         clips: List of (clip_path, detected_category, render_meta) tuples
         story_style: One of: story_news, story_roast, story_creepypasta, story_dramatic
+        language: Language code (en, ja, ko, etc.) - defaults to TTS_LANGUAGE env var
         
     Returns:
         List of ClipNarration objects with per-clip narration text
@@ -52,7 +69,11 @@ def generate_unified_story(
         logging.info("Only 1 clip - using standard narration instead of story mode")
         return []
     
-    logging.info(f"Generating unified {story_style} narrative for {len(clips)} clips")
+    # Get language from parameter or environment
+    if language is None:
+        language = os.getenv("TTS_LANGUAGE", "en")
+    
+    logging.info(f"Generating unified {story_style} narrative for {len(clips)} clips (language: {language})")
     
     provider = os.getenv("AI_PROVIDER", "gemini").lower()
     
@@ -60,16 +81,19 @@ def generate_unified_story(
     clips_for_story = [(p, cat) for p, cat, _ in clips]
     
     if provider == "openai":
-        return _generate_story_openai(clips_for_story, story_style)
+        return _generate_story_openai(clips_for_story, story_style, language)
     elif provider == "local":
         logging.warning("Story mode not available in local mode")
         return []
     else:  # gemini
-        return _generate_story_gemini(clips_for_story, story_style)
+        return _generate_story_gemini(clips_for_story, story_style, language)
 
 
-def _get_story_prompt(story_style: str, num_clips: int) -> str:
+def _get_story_prompt(story_style: str, num_clips: int, language: str = "en") -> str:
     """Get the prompt for cross-clip story generation."""
+    
+    # Get full language name
+    lang_name = LANGUAGE_NAMES.get(language, "English")
     
     style_guides = {
         "story_news": f"""You are a professional esports broadcaster creating a {num_clips}-part news segment.
@@ -121,12 +145,24 @@ Tone: Powerful, inspiring, grand.
 IMPORTANT: Generate 4-6 sentences per clip segment to fill the video duration. Space the epic narration throughout each clip."""
     }
     
-    return style_guides.get(story_style, style_guides["story_dramatic"])
+    base_prompt = style_guides.get(story_style, style_guides["story_dramatic"])
+    
+    # Add language instruction for non-English
+    if language != "en":
+        language_instruction = f"""\n\nLANGUAGE REQUIREMENT:
+- Generate ALL narration text in {lang_name}.
+- Adapt the tone and style to be culturally appropriate for {lang_name} speakers.
+- Use natural {lang_name} expressions and phrasing.
+- Do NOT translate literally from English - create authentic {lang_name} narration."""
+        return base_prompt + language_instruction
+    
+    return base_prompt
 
 
 def _generate_story_gemini(
     clips: List[Tuple[Path, str]],
-    story_style: str
+    story_style: str,
+    language: str = "en"
 ) -> List[ClipNarration]:
     """Generate cross-clip story using Gemini API."""
     
@@ -139,7 +175,7 @@ def _generate_story_gemini(
         import time
         from google import genai
         client = genai.Client(api_key=api_key)
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
         
         # Upload all clip videos with retry logic
         import time
@@ -215,7 +251,7 @@ def _generate_story_gemini(
                 raise RuntimeError(f"Gemini file processing timed out after {max_wait}s")
         
         # Build prompt
-        style_guide = _get_story_prompt(story_style, len(clips))
+        style_guide = _get_story_prompt(story_style, len(clips), language)
         
         prompt = f"""{style_guide}
 
@@ -318,7 +354,8 @@ The clips:"""
 
 def _generate_story_openai(
     clips: List[Tuple[Path, str]],
-    story_style: str
+    story_style: str,
+    language: str = "en"
 ) -> List[ClipNarration]:
     """Generate cross-clip story using OpenAI API (via frame extraction)."""
     
@@ -337,7 +374,7 @@ def _generate_story_openai(
         model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
         
         # Build prompt
-        style_guide = _get_story_prompt(story_style, len(clips))
+        style_guide = _get_story_prompt(story_style, len(clips), language)
         
         prompt = f"""{style_guide}
 

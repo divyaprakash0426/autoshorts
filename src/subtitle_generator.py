@@ -185,9 +185,36 @@ def apply_pycaps_subtitles(
     p.start()
     p.join()
     
-    if p.exitcode == 0 and (output_path.exists() or _check_for_fallback_output(video_path, output_path)):
-        logging.info(f"PyCaps subtitled video saved to: {output_path}")
-        return True
+    # Check for output - PyCaps derives output name from SRT file, not video file
+    # So when we pass extended video, it still outputs based on original SRT name
+    # SRT path = scene-0.srt → PyCaps outputs scene-0_sub.mp4
+    srt_stem = srt_path.stem  # e.g., "scene-0" from "scene-0.srt"
+    pycaps_output = srt_path.parent / f"{srt_stem}_sub.mp4"
+    
+    # Also check based on video path (for non-extended cases)
+    pycaps_output_from_video = video_path.with_stem(video_path.stem + "_sub").with_suffix(".mp4")
+    
+    if p.exitcode == 0:
+        # Check our expected path first
+        if output_path.exists():
+            logging.info(f"PyCaps subtitled video saved to: {output_path}")
+            return True
+        # Check PyCaps output based on SRT name (most common case when video was extended)
+        elif pycaps_output.exists():
+            import shutil
+            shutil.move(str(pycaps_output), str(output_path))
+            logging.info(f"PyCaps subtitled video (from SRT-based _sub.mp4) saved to: {output_path}")
+            return True
+        # Check PyCaps output based on video name
+        elif pycaps_output_from_video.exists():
+            import shutil
+            shutil.move(str(pycaps_output_from_video), str(output_path))
+            logging.info(f"PyCaps subtitled video (from video-based _sub.mp4) saved to: {output_path}")
+            return True
+        # Check fallback locations
+        elif _check_for_fallback_output(video_path, output_path):
+            logging.info(f"PyCaps subtitled video saved to: {output_path}")
+            return True
     
     logging.warning("PyCaps process failed or produced no output. Falling back to FFmpeg.")
     return _apply_ffmpeg_subtitles(video_path, srt_path, output_path, config)
@@ -594,7 +621,11 @@ def generate_subtitles(
         return None
     
     if output_path is None:
-        output_path = video_path.with_stem(video_path.stem + "_subtitled")
+        # Use .mp4 extension since PyCaps always outputs mp4 container
+        output_path = video_path.with_stem(video_path.stem + "_subtitled").with_suffix(".mp4")
+    else:
+        # Ensure output is mp4 even if caller specified different extension
+        output_path = output_path.with_suffix(".mp4")
     
     config = SubtitleConfig.from_env()
     srt_path = video_path.with_suffix(".srt")
@@ -651,7 +682,11 @@ def generate_subtitles(
                     duration = 30.0
                 
                 # Split narration into sentences
-                sentences = re.split(r'(?<=[.!?])\s+', story_narration.strip())
+                # Enhanced regex to handle:
+                # 1. English: [.!?] followed by whitespace
+                # 2. Japanese/CJK: [。！？] (no whitespace needed)
+                # 3. Newlines
+                sentences = re.split(r'(?<=[.!?])\s+|(?<=[。！？])', story_narration.strip())
                 sentences = [s.strip() for s in sentences if s.strip()]
                 
                 if not sentences:
@@ -722,53 +757,96 @@ def generate_subtitles(
                         MAX_WORDS_PER_CAPTION = 7
                         
                         for sentence, tts_duration in zip(sentences, sentence_durations):
-                            words = sentence.split()
-                            if not words:
-                                continue
-                                
-                            # If sentence is short enough, keep as one
-                            if len(words) <= MAX_WORDS_PER_CAPTION:
-                                end_time = current_time + tts_duration
-                                result_captions.append(Caption(
-                                    start_time=current_time,
-                                    end_time=end_time,
-                                    text=sentence,
-                                    style="narrative"
-                                ))
-                                current_time = end_time
-                            else:
-                                # Split into chunks
-                                chunks = []
-                                for i in range(0, len(words), MAX_WORDS_PER_CAPTION):
-                                    chunk_words = words[i:i + MAX_WORDS_PER_CAPTION]
-                                    chunks.append(" ".join(chunk_words))
-                                
-                                # Distribute duration proportionally
-                                total_chars = len(sentence)
-                                chunk_start = current_time
-                                
-                                for i, chunk in enumerate(chunks):
-                                    # Calculate duration based on character count ratio
-                                    # (characters correlate better with speaking time than word count)
-                                    chunk_ratio = len(chunk) / total_chars if total_chars > 0 else 1.0
-                                    chunk_dur = tts_duration * chunk_ratio
-                                    
-                                    # For the last chunk, ensure we essentially align with the end
-                                    # (floating point fix)
-                                    chunk_end = chunk_start + chunk_dur
-                                    if i == len(chunks) - 1:
-                                        chunk_end = current_time + tts_duration
-                                        
+                            # --- CJK Detection ---
+                            is_cjk = any("\u4e00" <= char <= "\u9fff" or "\u3040" <= char <= "\u30ff" for char in sentence)
+                            MAX_CJK_CHARS = 18  # Characters per line for CJK
+                            
+                            if is_cjk:
+                                # Character-based splitting for CJK
+                                if len(sentence) <= MAX_CJK_CHARS:
+                                    # Short sentence
+                                    end_time = current_time + tts_duration
                                     result_captions.append(Caption(
-                                        start_time=chunk_start,
-                                        end_time=chunk_end,
-                                        text=chunk,
+                                        start_time=current_time,
+                                        end_time=end_time,
+                                        text=sentence,
                                         style="narrative"
                                     ))
-                                    chunk_start = chunk_end
+                                    current_time = end_time
+                                else:
+                                    # Long sentence -> Split by chars
+                                    chunks = [sentence[i:i+MAX_CJK_CHARS] for i in range(0, len(sentence), MAX_CJK_CHARS)]
+                                    
+                                    total_chars = len(sentence)
+                                    chunk_start = current_time
+                                    
+                                    for i, chunk in enumerate(chunks):
+                                        chunk_ratio = len(chunk) / total_chars if total_chars > 0 else 1.0
+                                        chunk_dur = tts_duration * chunk_ratio
+                                        
+                                        chunk_end = chunk_start + chunk_dur
+                                        if i == len(chunks) - 1:
+                                            chunk_end = current_time + tts_duration
+                                            
+                                        result_captions.append(Caption(
+                                            start_time=chunk_start,
+                                            end_time=chunk_end,
+                                            text=chunk,
+                                            style="narrative"
+                                        ))
+                                        chunk_start = chunk_end
+                                    
+                                    # Update current_time for the next sentence
+                                    current_time = current_time + tts_duration
+                            else:
+                                # --- Standard Word-based Logic ---
+                                words = sentence.split()
+                                if not words:
+                                    continue
                                 
-                                # Update current_time for the next sentence
-                                current_time = current_time + tts_duration
+                                # If sentence is short enough, keep as one
+                                if len(words) <= MAX_WORDS_PER_CAPTION:
+                                    end_time = current_time + tts_duration
+                                    result_captions.append(Caption(
+                                        start_time=current_time,
+                                        end_time=end_time,
+                                        text=sentence,
+                                        style="narrative"
+                                    ))
+                                    current_time = end_time
+                                else:
+                                    # Split into chunks
+                                    chunks = []
+                                    for i in range(0, len(words), MAX_WORDS_PER_CAPTION):
+                                        chunk_words = words[i:i + MAX_WORDS_PER_CAPTION]
+                                        chunks.append(" ".join(chunk_words))
+                                    
+                                    # Distribute duration proportionally
+                                    total_chars = len(sentence)
+                                    chunk_start = current_time
+                                    
+                                    for i, chunk in enumerate(chunks):
+                                        # Calculate duration based on character count ratio
+                                        # (characters correlate better with speaking time than word count)
+                                        chunk_ratio = len(chunk) / total_chars if total_chars > 0 else 1.0
+                                        chunk_dur = tts_duration * chunk_ratio
+                                        
+                                        # For the last chunk, ensure we essentially align with the end
+                                        # (floating point fix)
+                                        chunk_end = chunk_start + chunk_dur
+                                        if i == len(chunks) - 1:
+                                            chunk_end = current_time + tts_duration
+                                            
+                                        result_captions.append(Caption(
+                                            start_time=chunk_start,
+                                            end_time=chunk_end,
+                                            text=chunk,
+                                            style="narrative"
+                                        ))
+                                        chunk_start = chunk_end
+                                    
+                                    # Update current_time for the next sentence
+                                    current_time = current_time + tts_duration
                         
                         # === SAVE PRE-GENERATED TTS AUDIO ===
                         # Build the final audio from saved segments to avoid regenerating
@@ -1036,16 +1114,70 @@ def generate_subtitles(
             logging.warning("No subtitles generated (empty SRT)")
             return None
         
-        # Apply subtitles using PyCaps
-        success = apply_pycaps_subtitles(video_path, srt_path, output_path, config, word_lists=word_lists)
+        # === EXTEND VIDEO TO MATCH TTS DURATION (if needed) ===
+        # This MUST happen BEFORE PyCaps so subtitles are rendered on the full-length video
+        story_tts_path = srt_path.with_suffix(".story_tts.wav")
+        video_for_pycaps = video_path
+        extended_video_temp = None
+        
+        if story_tts_path.exists() and render_meta:
+            from tts_generator import get_audio_duration, get_video_duration, rerender_video_longer, RenderMeta
+            
+            tts_duration = get_audio_duration(story_tts_path)
+            video_duration = get_video_duration(video_path)
+            
+            if tts_duration > video_duration + 1.0:  # TTS is significantly longer
+                logging.info(f"TTS ({tts_duration:.1f}s) longer than video ({video_duration:.1f}s)")
+                logging.info("Re-rendering video to TTS duration BEFORE applying subtitles...")
+                
+                # Re-render video to match TTS duration + buffer
+                extended_video_temp = video_path.with_stem(video_path.stem + "_extended_for_subs")
+                target_duration = tts_duration + 1.0
+                
+                try:
+                    tts_render_meta = RenderMeta(
+                        source_path=Path(render_meta["source_path"]),
+                        start_time=render_meta["start_time"],
+                        original_duration=render_meta["duration"],
+                        output_width=render_meta["output_width"],
+                        output_height=render_meta["output_height"],
+                        crop_x=render_meta["crop_x"],
+                        crop_y=render_meta["crop_y"],
+                        crop_w=render_meta["crop_w"],
+                        crop_h=render_meta["crop_h"],
+                        bg_width=render_meta.get("bg_width", render_meta["output_width"]),
+                        bg_height=render_meta.get("bg_height", render_meta["output_height"]),
+                        is_vertical_bg=render_meta.get("is_vertical_bg", True),
+                    )
+                    
+                    if rerender_video_longer(tts_render_meta, target_duration, extended_video_temp):
+                        video_for_pycaps = extended_video_temp
+                        logging.info(f"Video extended to {target_duration:.1f}s for subtitle rendering")
+                    else:
+                        logging.warning("Video extension failed, subtitles may be truncated")
+                except Exception as e:
+                    logging.warning(f"Could not extend video: {e}")
+        
+        # Apply subtitles using PyCaps (to the potentially extended video)
+        success = apply_pycaps_subtitles(video_for_pycaps, srt_path, output_path, config, word_lists=word_lists)
+        
+        # DON'T clean up extended video yet - we need its audio track for TTS mixing!
+        # PyCaps strips audio, so we need it from the source video
+        audio_source_video = extended_video_temp if extended_video_temp and extended_video_temp.exists() else video_path
         
         if not success:
             logging.error("Subtitle burn-in failed")
+            # Cleanup extended video on failure
+            if extended_video_temp and extended_video_temp.exists():
+                try:
+                    extended_video_temp.unlink()
+                except Exception:
+                    pass
             return None
         
         # --- TTS Voiceover (Optional) ---
         try:
-            from tts_generator import is_tts_enabled, QwenTTS, TTSConfig, mix_audio_with_video, RenderMeta
+            from tts_generator import is_tts_enabled, QwenTTS, TTSConfig, RenderMeta
             
             if is_tts_enabled():
                 logging.info("Generating TTS voiceover...")
@@ -1065,40 +1197,55 @@ def generate_subtitles(
                     game_vol = float(os.getenv("TTS_GAME_AUDIO_VOLUME", "0.3"))
                     voice_vol = float(os.getenv("TTS_VOICEOVER_VOLUME", "1.0"))
                     
-                    # Convert render_meta dict to RenderMeta dataclass if provided
-                    tts_render_meta = None
-                    if render_meta:
-                        try:
-                            tts_render_meta = RenderMeta(
-                                source_path=Path(render_meta["source_path"]),
-                                start_time=render_meta["start_time"],
-                                original_duration=render_meta["duration"],
-                                output_width=render_meta["output_width"],
-                                output_height=render_meta["output_height"],
-                                crop_x=render_meta["crop_x"],
-                                crop_y=render_meta["crop_y"],
-                                crop_w=render_meta["crop_w"],
-                                crop_h=render_meta["crop_h"],
-                                bg_width=render_meta.get("bg_width", render_meta["output_width"]),
-                                bg_height=render_meta.get("bg_height", render_meta["output_height"]),
-                                is_vertical_bg=render_meta.get("is_vertical_bg", True),
-                            )
-                        except (KeyError, TypeError) as e:
-                            logging.warning(f"Could not create RenderMeta: {e}")
+                    # PyCaps output has NO AUDIO, so we need to mix 3 streams:
+                    # 1. Video from PyCaps output (output_path)
+                    # 2. Audio from source video (audio_source_video)
+                    # 3. TTS voiceover
+                    logging.info(f"Mixing: video from PyCaps, audio from source, TTS voiceover")
                     
-                    if mix_audio_with_video(output_path, voiceover_path, mixed_output, game_vol, voice_vol, tts_render_meta):
+                    filter_complex = (
+                        f"[1:a]volume={game_vol}[game];"
+                        f"[2:a]volume={voice_vol}[voice];"
+                        "[game][voice]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+                    )
+                    
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", str(output_path),         # Video from PyCaps (no audio)
+                        "-i", str(audio_source_video),  # Audio source (original/extended video)
+                        "-i", str(voiceover_path),      # TTS voiceover
+                        "-filter_complex", filter_complex,
+                        "-map", "0:v",                  # Video from PyCaps
+                        "-map", "[aout]",               # Mixed audio
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        str(mixed_output)
+                    ]
+                    
+                    import subprocess
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    
+                    if result.returncode == 0 and mixed_output.exists():
                         # Replace subtitled version with voiced version
                         output_path.unlink()
                         mixed_output.rename(output_path)
                         logging.info(f"TTS voiceover added successfully")
                     else:
-                        logging.warning("TTS audio mixing failed, keeping subtitles only")
+                        logging.warning(f"TTS audio mixing failed: {result.stderr[:300]}")
                     
                     # Cleanup the pre-generated TTS file
                     try:
                         story_tts_path.unlink()
                     except Exception:
                         pass
+                        
+                    # Cleanup extended video temp file if it was used
+                    if extended_video_temp and extended_video_temp.exists():
+                        try:
+                            extended_video_temp.unlink()
+                        except Exception:
+                            pass
                 else:
                     # === GENERATE TTS ON-THE-FLY (non-story modes) ===
                     # Parse SRT with timing for proper audio alignment

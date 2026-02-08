@@ -201,8 +201,65 @@ def get_shared_css() -> str:
             font-size: 1rem;
             transition: all 0.2s;
         }}
+
+        /* --- Hero Container (New) --- */
+        .hero-container {{
+            display: flex;
+            flex-direction: column;
+            align_items: center;
+            justify_content: center;
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 3rem 2rem;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 100%);
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }}
+        .hero-logo-img {{
+            max-width: 150px;
+            margin-bottom: 1rem;
+        }}
+        .hero-title-large {{
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin: 0;
+            background: -webkit-linear-gradient(45deg, {COLORS['primary']}, #00c6ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            line-height: 1.2;
+        }}
+        .hero-subtitle-large {{
+            font-size: 1.25rem;
+            font-weight: 500;
+            color: #e0e0e0;
+            margin-top: 0.5rem;
+            margin-bottom: 1.5rem;
+        }}
+        .hero-summary {{
+            font-size: 1.1rem;
+            color: {COLORS['text_secondary']};
+            max-width: 600px;
+            line-height: 1.6;
+            margin: 0 auto;
+        }}
+
+        /* --- Feature Pills (New) --- */
+        .feature-pill {{
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 50px;
+            padding: 0.35rem 0.85rem;
+            margin: 0.3rem;
+            font-size: 0.85rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.2s ease;
+        }}
+        .feature-pill:hover {{
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.3);
+        }}
         
-        /* Primary buttons (selected state) - multiple selectors for compatibility */
+        /* Stats cards */
         .stButton > button[kind="primary"],
         .stButton > button[data-testid="baseButton-primary"],
         .stButton button[kind="primary"],

@@ -29,19 +29,31 @@ def main() -> None:
     # Apply shared theme
     st.markdown(get_shared_css(), unsafe_allow_html=True)
     
-    # Hero section - place title inside the blue page-header box
+
+    # 2. Logo (Centered)
+    if LOGO_PATH.exists():
+        # Use columns to center the image
+        lc, mc, rc = st.columns([1, 0.8, 1])
+        with mc:
+            st.image(str(LOGO_PATH), width=180)
+            
+    # 3. Summary Text (Centered)
+    # Wrapped in a div to ensure text alignment since it's outside the hero-container
     st.markdown("""
-        <div class="page-header" style="text-align: center;">
-            <h1 class="hero-title" style="margin:0;">AutoShorts</h1>
+        <div style="text-align: center; margin-left: 13rem; margin-bottom: 1rem;">
+            <p class="hero-summary">
+                Turn hours of raw gameplay into viral short-form content in minutes. 
+                AutoShorts intelligently analyzes your footage to detect high-impact moments, 
+                generates professional voiceovers, and applies dynamic captions—optimized 
+                for TikTok, YouTube Shorts, and Instagram Reels.
+            </p>
         </div>
     """, unsafe_allow_html=True)
 
-    # Logo below header and descriptive text
-    if LOGO_PATH.exists():
-        st.image(str(LOGO_PATH), width=180)
-    st.markdown('<p class="hero-subtitle" style="text-align:center; margin-top: 0.5rem; color: #a0a0a0; font-size: 1.1rem;">AI-powered scene analysis • GPU-accelerated rendering • Auto voiceovers & captions</p>', unsafe_allow_html=True)
-    
-    # Showcase GIFs
+    # Examples Divider
+    st.divider()
+
+    # Showcase GIFs if available
     showcase_dir = Path("generated/showcase")
     gifs = sorted(showcase_dir.glob("*.gif")) if showcase_dir.exists() else []
     
@@ -50,70 +62,93 @@ def main() -> None:
         cols = st.columns(min(len(gifs), 4))
         for idx, gif in enumerate(gifs[:4]):
             with cols[idx]:
-                st.image(str(gif), use_container_width=True)
+                st.image(str(gif), width="stretch")
                 st.caption(f"Sample {idx + 1}")
         st.divider()
     
-    # Features grid
-    st.markdown("### 🚀 Key Features")
+    # Features Grid with Pills
+    st.markdown("### 🚀 Power Features")
     
     col1, col2 = st.columns(2)
     
     with col1:
+        # AI Analysis Card
         st.markdown("""
             <div class="feature-card">
-                <h4>🎯 AI Scene Analysis</h4>
-                <ul>
-                    <li><strong>OpenAI & Gemini</strong> support for smart scene ranking</li>
-                    <li><strong>7 semantic types</strong> detected automatically</li>
-                    <li>AI picks the most engaging moments from hours of footage</li>
-                </ul>
-                <p style="font-size: 0.85rem; opacity: 0.7;">
-                    Types: action • funny • clutch • wtf • epic_fail • hype • skill
-                </p>
+                <h4>🎯 <span>AI Scene Analysis</span></h4>
+                <div style="margin-bottom: 1rem;">
+                    <span class="feature-pill">🤖 OpenAI & Gemini</span>
+                    <span class="feature-pill">📊 Smart Ranking</span>
+                    <span class="feature-pill">⏱️ Auto-Cuts</span>
+                </div>
+                <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem;">Automatically detects 7 semantic highlight types:</p>
+                <div>
+                    <span class="feature-pill" style="border-color: #ff4b4b; background: rgba(255, 75, 75, 0.1);">🔥 Action</span>
+                    <span class="feature-pill" style="border-color: #ffd700; background: rgba(255, 215, 0, 0.1);">😂 Funny</span>
+                    <span class="feature-pill" style="border-color: #00d26a; background: rgba(0, 210, 106, 0.1);">🏆 Clutch</span>
+                    <span class="feature-pill">🤨 WTF</span>
+                    <span class="feature-pill">💀 Fail</span>
+                </div>
             </div>
         """, unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
         
+        # Captions Card
         st.markdown("""
             <div class="feature-card">
-                <h4>🎙️ Smart Captions</h4>
-                <ul>
-                    <li><strong>Speech mode:</strong> Transcribe voice with Whisper</li>
-                    <li><strong>AI Captions:</strong> Generated commentary for silent gameplay</li>
-                    <li><strong>10+ styles:</strong> Gaming, GenZ, Story modes</li>
-                    <li><strong>Auto-style:</strong> Matches tone to detected content</li>
-                </ul>
+                <h4>🎙️ <span>Smart Captions</span></h4>
+                <div style="margin-bottom: 1rem;">
+                    <span class="feature-pill">🎤 Whisper Transcription</span>
+                    <span class="feature-pill">📝 AI Commentary</span>
+                    <span class="feature-pill">✨ Auto-Style Match</span>
+                </div>
+                <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem;">Dynamic styles for every mood:</p>
+                <div>
+                    <span class="feature-pill">🎮 Gaming</span>
+                    <span class="feature-pill">📢 News</span>
+                    <span class="feature-pill">📖 Story</span>
+                    <span class="feature-pill">🔥 Roast</span>
+                    <span class="feature-pill">👻 Horror</span>
+                </div>
             </div>
         """, unsafe_allow_html=True)
     
     with col2:
+        # Voiceover Card
         st.markdown("""
             <div class="feature-card">
-                <h4>🔊 AI Voiceover</h4>
-                <ul>
-                    <li><strong>Qwen3-TTS</strong> voice synthesis engine</li>
-                    <li><strong>Style-adaptive voices</strong> per caption type</li>
-                    <li><strong>10 languages</strong> supported</li>
-                </ul>
-                <p style="font-size: 0.85rem; opacity: 0.7;">
-                    GenZ → Energetic • News → Professional • Roast → Sarcastic
-                </p>
+                <h4>🔊 <span>AI Voiceover</span></h4>
+                <div style="margin-bottom: 1rem;">
+                    <span class="feature-pill">🗣️ Qwen3-TTS Engine</span>
+                    <span class="feature-pill">🎭 Style-Adaptive</span>
+                    <span class="feature-pill">🌍 10+ Languages</span>
+                </div>
+                <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem;">Voices that match the vibe:</p>
+                <div>
+                    <span class="feature-pill">⚡ Energetic (GenZ)</span>
+                    <span class="feature-pill">👔 Professional</span>
+                    <span class="feature-pill">😏 Sarcastic</span>
+                    <span class="feature-pill">😨 Tense</span>
+                </div>
             </div>
         """, unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
         
+        # GPU Performance Card
         st.markdown("""
             <div class="feature-card">
-                <h4>⚡ GPU-Accelerated</h4>
-                <ul>
-                    <li><strong>NVENC</strong> hardware encoding (10x faster)</li>
-                    <li><strong>CUDA</strong> scene detection & audio analysis</li>
-                    <li><strong>Smart fallbacks</strong> to CPU if GPU unavailable</li>
-                    <li>Process a 1-hour video in ~10 minutes</li>
-                </ul>
+                <h4>⚡ <span>GPU Accelerated</span></h4>
+                <div style="margin-bottom: 1rem;">
+                    <span class="feature-pill">🚀 NVENC Encoding</span>
+                    <span class="feature-pill">👁️ CUDA Vision</span>
+                    <span class="feature-pill">🔊 GPU Audio Analysis</span>
+                </div>
+                <div>
+                    <span class="feature-pill" style="background: rgba(118, 185, 0, 0.15); border-color: #76b900;">✅ NVIDIA Optimized</span>
+                    <span class="feature-pill">10x Faster than CPU</span>
+                </div>
             </div>
         """, unsafe_allow_html=True)
     

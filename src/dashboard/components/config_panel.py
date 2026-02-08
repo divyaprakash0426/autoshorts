@@ -143,6 +143,8 @@ def render_config_panel(sections: Tuple[EnvSection, ...]) -> Tuple[Dict[str, str
                     continue
                 if field.name == "GEMINI_MODEL" and ai_provider != "gemini":
                     continue
+                if field.name == "GEMINI_DEEP_ANALYSIS" and ai_provider != "gemini":
+                    continue
                 if field.name in ("OPENAI_MODEL", "OPENAI_TAGGING_MODEL") and ai_provider != "openai":
                     continue
                 
@@ -166,7 +168,7 @@ def render_config_panel(sections: Tuple[EnvSection, ...]) -> Tuple[Dict[str, str
     
     # Manual save button as backup
     col1, col2 = st.columns([1, 3])
-    if col1.button("💾 Save All", type="primary", use_container_width=True):
+    if col1.button("💾 Save All", type="primary", width="stretch"):
         save_env_values(updated_values, extras)
         st.success("Configuration saved!")
     

@@ -74,7 +74,7 @@ def render() -> None:
             if st.button(
                 f"{label}\n\n{preset['desc']}",
                 key=f"preset_{w}_{h}",
-                use_container_width=True,
+                width="stretch",
                 type=btn_type
             ):
                 if not is_current:

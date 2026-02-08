@@ -250,13 +250,14 @@ class ProcessingConfig:
 
     target_ratio_w: int = 1
     target_ratio_h: int = 1
-    scene_limit: int = 6
+    scene_limit: int = 4
     x_center: float = 0.5
     y_center: float = 0.5
     max_error_depth: int = 3
     min_short_length: int = 15
     max_short_length: int = 179
     max_combined_scene_length: int = 300
+    gemini_deep_analysis: bool = False
 
     @property
     def middle_short_length(self) -> float:
@@ -1216,14 +1217,14 @@ def render_video_gpu(
 
     logging.info(f"Rendering GPU: {output_path.name}")
 
-    # 1. Extract audio
+    # 1. Extract audio (transcode to AAC for compatibility with various source codecs like Opus)
     temp_audio = output_path.with_suffix(".aac")
     cmd_audio = [
         "ffmpeg", "-y",
         "-ss", f"{params.start_time:.3f}",
         "-t", f"{params.duration:.3f}",
         "-i", str(params.source_path),
-        "-vn", "-acodec", "copy",
+        "-vn", "-c:a", "aac", "-b:a", "192k",
         str(temp_audio)
     ]
     subprocess.run(cmd_audio, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -1726,23 +1727,84 @@ def rank_scenes_with_ai(
     # Sort by heuristic score and take top candidates
     scene_scores.sort(key=lambda x: x[1], reverse=True)
     
-    # Diversity Strategy: 70% Top Action, 30% Random Exploration
-    # This allows lower-action-score clips (like funny dialogue) to have a chance.
-    top_tier_count = int(candidate_count * 0.7)
-    random_tier_count = candidate_count - top_tier_count
+    # Check for Deep Analysis Override
+    from ai_providers import GeminiAnalyzer
+    enabled_ai, _, _ = _get_ai_config()
+    is_gemini = os.getenv("AI_PROVIDER", "openai") == "gemini"
+    deep_analysis = os.getenv("GEMINI_DEEP_ANALYSIS", "false").lower() in ("true", "1", "yes")
 
-    top_candidates = scene_scores[:top_tier_count]
-    remaining_pool = scene_scores[top_tier_count:]
+    deep_candidates = []
     
-    if remaining_pool and random_tier_count > 0:
-        # Pick random scenes from the rest
-        random_candidates = random.sample(remaining_pool, min(len(remaining_pool), random_tier_count))
-        top_candidates.extend(random_candidates)
-        logging.info(f"Scene candidates: {len(top_candidates) - len(random_candidates)} high-action + {len(random_candidates)} random exploration.")
+    # MIXING STRATEGY:
+    # If Deep Analysis is ON, we want to rely mostly on it because it's smarter.
+    # However, we still might want 2-3 "High Action" clips from heuristics as a backup/filler.
+    
+    if enabled_ai and is_gemini and deep_analysis:
+        try:
+            logging.info("🧠 Gemini Deep Analysis Enabled: Scanning full video for moments...")
+            analyzer = GeminiAnalyzer()
+            # Get video duration from last scene end
+            total_duration = scenes[-1][1].get_seconds() if scenes else 0
+            if total_duration > 0:
+                moments = analyzer.analyze_full_video(video_file, total_duration, target_count=candidate_count)
+                
+                # Convert moments to scene candidates
+                for start, end, cat, score in moments:
+                    # Create scene object using helper class directly if needed, or mock it with list of _SecondsTime
+                    # Note: _SecondsTime is efficient wrapper.
+                    scene_obj = [_SecondsTime(start), _SecondsTime(end)]
+                    
+                    # Store tuple: (scene, score, category)
+                    # We add 200.0 to score to ensure they are ranked higher than ANY heuristic score (which are usually < 100)
+                    deep_candidates.append((scene_obj, 200.0 + score, cat)) 
+                    logging.info(f"    ✨ Deep Analysis found: {cat} ({score:.2f}) at {start}-{end}")
+                    
+        except Exception as e:
+            logging.error(f"Deep analysis failed: {e}")
+            # Fallback to normal heuristic flow if deep analysis crashes
+            deep_candidates = []
+
+    # Final Candidate Selection
+    if deep_candidates:
+        # STRATEGY: Pure Deep Analysis + Backup
+        # Take ALL deep analysis moments.
+        # Fill the rest of the 'candidate_count' slots with the absolute highest action scenes from heuristics.
+        # This gives best of both worlds: Smarts + Explosions.
+        
+        needed = max(0, candidate_count - len(deep_candidates))
+        heuristic_backups = scene_scores[:needed]
+        
+        # Ensure heuristic backups have None category to match tuple structure
+        heuristic_backups_with_cat = []
+        for s, score in heuristic_backups:
+             heuristic_backups_with_cat.append((s, score, None))
+             
+        top_candidates = deep_candidates + heuristic_backups_with_cat
+        logging.info(f"Scene candidates: {len(deep_candidates)} Deep Analysis + {len(heuristic_backups)} Heuristic Action Backups")
+        
     else:
-        # Fallback if not enough scenes
-        top_candidates = scene_scores[:candidate_count]
-    
+        # STRATEGY: Standard Heuristic
+        # Diversity Strategy: 70% Top Action, 30% Random Exploration
+        top_tier_count = int(candidate_count * 0.7)
+        random_tier_count = candidate_count - top_tier_count
+
+        top_candidates_scores = scene_scores[:top_tier_count]
+        remaining_pool = scene_scores[top_tier_count:]
+        
+        top_candidates = []
+        # Add None category to standard candidates
+        for s, score in top_candidates_scores:
+            top_candidates.append((s, score, None))
+        
+        if remaining_pool and random_tier_count > 0:
+            random_pool = random.sample(remaining_pool, min(len(remaining_pool), random_tier_count))
+            for s, score in random_pool:
+                top_candidates.append((s, score, None))
+            logging.info(f"Scene candidates: {len(top_candidates_scores)} high-action + {len(random_pool)} random exploration.")
+        else:
+            # Fallback
+            top_candidates = [(s, score, None) for s, score in scene_scores[:candidate_count]]
+
     if not top_candidates:
         return []
     
@@ -1762,7 +1824,11 @@ def rank_scenes_with_ai(
         
         # Helper function for parallel execution
         def _process_candidate(idx, scene_tuple):
-            scene, heuristic_score = scene_tuple
+            # Handle variable tuple length (scene, score) or (scene, score, category)
+            scene = scene_tuple[0]
+            heuristic_score = scene_tuple[1]
+            pre_detected_category = scene_tuple[2] if len(scene_tuple) > 2 else None
+            
             start_sec = scene[0].get_seconds()
             end_sec = scene[1].get_seconds()
             scene_duration = end_sec - start_sec
@@ -1780,13 +1846,27 @@ def rank_scenes_with_ai(
             )
             
             if success:
-                # Normalize heuristic score to 0-1
-                normalized_score = (heuristic_score - min_score) / score_range
+                if pre_detected_category:
+                    # Deep Analysis Clip:
+                    # We assigned it a raw score of 200.xx earlier.
+                    # We want to map this to a "Heuristic Score" that is slightly above the 0-1 range (e.g., 2.0),
+                    # ensuring it takes priority but doesn't break math.
+                    # We intentionally ignore the global min/max/range for this special case.
+                    normalized_score = 2.0
+                else:
+                    # Standard Heuristic Clip:
+                    # Normalize raw ActionScore (which can be -4000 to +8000) to 0.0 - 1.0 range
+                    if score_range > 0:
+                        normalized_score = (heuristic_score - min_score) / score_range
+                    else:
+                        normalized_score = 0.5
+                     
                 return ClipScore(
                     clip_path=clip_path,
                     original_start=start_sec,
                     original_end=end_sec,
                     heuristic_score=normalized_score,
+                    detected_category=pre_detected_category or "", # Pass hint
                 )
             return None
 
@@ -1815,9 +1895,45 @@ def rank_scenes_with_ai(
             return [(s, score, "Heuristic only") for s, score in scene_scores]
         
         # Step 3: Run AI analysis (analyzes all 7 semantic types)
-        logging.info("Running AI semantic analysis (all types)...")
+        # OPTIMIZATION: If we already have a detected_category from Deep Analysis, we can skip re-analysis!
+        # This saves API costs and time.
+        
         analyzer = get_analyzer()
-        result = analyzer.analyze_clips(clip_infos)
+        
+        clips_to_analyze = []
+        clips_already_analyzed = []
+        
+        for clip in clip_infos:
+            if clip.detected_category and clip.heuristic_score > 1.0: 
+                # Heuristic score > 1.0 indicates it came from Deep Analysis override
+                logging.info(f"✨ Skipping re-analysis for Deep Analysis clip: {clip.clip_path.name} [{clip.detected_category}]")
+                clip.ai_score = 0.95 # High trust
+                clip.reason = f"Identified by Gemini Deep Analysis as {clip.detected_category}"
+                # Fill category scores for completeness
+                clip.category_scores = {k: 0.1 for k in ClipScore.SEMANTIC_TYPES}
+                clip.category_scores[clip.detected_category] = 0.95
+                clips_already_analyzed.append(clip)
+            else:
+                clips_to_analyze.append(clip)
+        
+        results_from_api = []
+        if clips_to_analyze:
+            logging.info(f"Running AI semantic analysis on {len(clips_to_analyze)} clips...")
+            analysis_result = analyzer.analyze_clips(clips_to_analyze)
+            results_from_api = analysis_result.clips
+        
+        # Merge results
+        final_clips = clips_already_analyzed + results_from_api
+        
+        # Verify provider name
+        provider_name = "gemini" if clips_already_analyzed else (analyzer.model_name if hasattr(analyzer, 'model_name') else "unknown")
+        
+        from ai_providers import AnalysisResult
+        result = AnalysisResult(
+            clips=final_clips,
+            provider=provider_name,
+            raw_response="Merged Deep Analysis + Standard Analysis"
+        )
         
         logging.info(f"AI analysis complete (provider: {result.provider})")
         
@@ -1825,7 +1941,12 @@ def rank_scenes_with_ai(
         ranked_scenes = []
         
         # Create a mapping from clip start time to scene
-        start_to_scene = {scene[0].get_seconds(): scene for scene, _ in top_candidates}
+        # Create a mapping from clip start time to scene
+        # Handle variable tuple length (scene, score) or (scene, score, category)
+        start_to_scene = {}
+        for candidate in top_candidates:
+            scene = candidate[0]
+            start_to_scene[scene[0].get_seconds()] = scene
         
         for clip_score in result.clips:
             scene = start_to_scene.get(clip_score.original_start)
@@ -1844,7 +1965,7 @@ def rank_scenes_with_ai(
         logging.info("AI-ranked scenes:")
         for i, (scene, score, category) in enumerate(ranked_scenes[:10], 1):
             logging.info(
-                f"    #{i}: Score {score:.3f} [{category}] | {scene[0].get_timecode()}-{scene[1].get_timecode()}"
+                f"    #{i}: Score {score:.4f} [{category}] | {scene[0].get_timecode()}-{scene[1].get_timecode()}"
             )
         
         return ranked_scenes
@@ -2141,9 +2262,10 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
     if final_scene_list:
         for i, scene in enumerate(final_scene_list):
             duration = math.floor(scene[1].get_seconds() - scene[0].get_seconds())
-            short_length = random.randint(
-                config.min_short_length, min(config.max_short_length, duration)
-            )
+            # Ensure min <= max for randint (scene might be shorter than min_short_length)
+            effective_max = min(config.max_short_length, duration)
+            effective_min = min(config.min_short_length, effective_max)
+            short_length = random.randint(effective_min, effective_max)
 
             best_start = best_action_window_start(
                 scene,
@@ -2362,13 +2484,14 @@ def config_from_env() -> ProcessingConfig:
     return ProcessingConfig(
         target_ratio_w=_get_env_int("TARGET_RATIO_W", 1),
         target_ratio_h=_get_env_int("TARGET_RATIO_H", 1),
-        scene_limit=_get_env_int("SCENE_LIMIT", 6),
+        scene_limit=_get_env_int("SCENE_LIMIT", 4),
         x_center=_get_env_float("X_CENTER", 0.5),
         y_center=_get_env_float("Y_CENTER", 0.5),
         max_error_depth=_get_env_int("MAX_ERROR_DEPTH", 3),
         min_short_length=_get_env_int("MIN_SHORT_LENGTH", 0),  # 0 = auto
         max_short_length=_get_env_int("MAX_SHORT_LENGTH", 0),  # 0 = auto
         max_combined_scene_length=_get_env_int("MAX_COMBINED_SCENE_LENGTH", 0),  # 0 = auto
+        gemini_deep_analysis=os.getenv("GEMINI_DEEP_ANALYSIS", "false").lower() in ("true", "1", "yes"),
     )
 
 

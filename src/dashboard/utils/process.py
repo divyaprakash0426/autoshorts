@@ -59,7 +59,7 @@ class ProcessManager:
                 break
             self._log_buffer.append(line.rstrip())
 
-    def status(self, tail_lines: int = 200) -> ProcessStatus:
+    def status(self, tail_lines: int = 5000) -> ProcessStatus:
         self.refresh()
         running = self.running
         exit_code = None if running else (self._process.poll() if self._process else None)

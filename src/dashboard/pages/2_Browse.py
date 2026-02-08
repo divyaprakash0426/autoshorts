@@ -43,10 +43,10 @@ def _render_video_grid(videos, cols_count=3, key_prefix="vid"):
             st.video(str(selected_path))
             
             col1, col2, col3 = st.columns([1, 1, 2])
-            if col1.button("✕ Close Player", key=f"{key_prefix}_close", use_container_width=True):
+            if col1.button("✕ Close Player", key=f"{key_prefix}_close", width="stretch"):
                 st.session_state[selected_key] = None
                 st.rerun()
-            if col2.button("🗑️ Delete", key=f"{key_prefix}_delete", type="secondary", use_container_width=True):
+            if col2.button("🗑️ Delete", key=f"{key_prefix}_delete", type="secondary", width="stretch"):
                 try:
                     selected_path.unlink()
                     st.session_state[selected_key] = None
@@ -75,7 +75,7 @@ def _render_video_grid(videos, cols_count=3, key_prefix="vid"):
                 with st.container():
                     # Thumbnail
                     if info.thumbnail and info.thumbnail.exists():
-                        st.image(str(info.thumbnail), use_container_width=True)
+                        st.image(str(info.thumbnail), width="stretch")
                     else:
                         st.markdown("""
                             <div style="background: #1a1a2e; height: 120px; display: flex; 
@@ -89,7 +89,7 @@ def _render_video_grid(videos, cols_count=3, key_prefix="vid"):
                     st.markdown(f"**{info.path.name[:25]}{'...' if len(info.path.name) > 25 else ''}**")
                     st.caption(f"⏱️ {info.duration:.0f}s • 💾 {info.size_mb:.1f}MB")
                     
-                    if st.button("▶️ Play", key=f"{key_prefix}_{info.path.stem}", use_container_width=True):
+                    if st.button("▶️ Play", key=f"{key_prefix}_{info.path.stem}", width="stretch"):
                         st.session_state[selected_key] = info.path
                         st.rerun()
 
