@@ -30,12 +30,25 @@ We will extensively use Copilot CLI to accelerate the development of these featu
   - `story_dramatic`: Epic cinematic movie-trailer narration
   - [ ] **Multi-Speaker / Podcast Mode**: NotebookLM-style narration with distinct character voices via text prompts (e.g., "Sarcastic GenZ commentator", "Hyped esports caster") for dialogue-driven content.
 
-## 🧠 Phase 3: Visual Intelligence
+## 🧠 Phase 3: Universal Clipping & Visual Intelligence
 
-*Focus: Moving beyond center-cropping to active scene understanding.*
+*Focus: Supporting all video content types and smarter scene understanding.*
 
-- [ ] **Intelligent Auto-Zoom**: Integrate **YOLO / RT-DETR** to identify the "subject" (player, car, crosshair) and dynamically follow it in the 9:16 crop.
-- [ ] **Scene Transition Styles**: AI-generated transitions between merged highlights to make the flow more cinematic.
+- [ ] **Universal Video Type Support**: Expand clipping beyond gaming to support all types of video content:
+  - 🎙️ **Podcasts** — Detect speaker turns, highlights, and quotable moments.
+  - 🎬 **Entertainment** — Movie reactions, TV show recaps, anime highlights.
+  - ⚽ **Sports** — Goals, dunks, knockouts, race finishes, and clutch plays.
+  - 📷 **Vlogs** — Travel highlights, daily moments, and storytelling beats.
+  - 📺 **TV Shows** — Scene extraction, dramatic moments, and funny cuts.
+  - 🎥 **Documentaries** — Key insights, narration peaks, and visual spectacles.
+  - 🎵 **Music** — Concert highlights, music video moments, and live performances.
+  - 📚 **Educational** — Key explanations, demos, and "aha" moments.
+  - 🗣️ **Interviews** — Best quotes, reactions, and controversial takes.
+  - 😂 **Comedy** — Punchlines, crowd reactions, and sketch highlights.
+  - 📰 **News & Commentary** — Breaking moments, hot takes, and debate clips.
+  - 🎮 **Esports / Tournaments** — Clutch rounds, team fights, and crowd reactions.
+  - 🍳 **Cooking & DIY** — Recipe reveals, transformation moments, and tips.
+  - 💪 **Fitness** — PR lifts, form demos, and motivational moments.
 - [ ] **Content Farm Mode**:
   - "Watch-Folder" support for fully automated background processing.
   - **Parallel Batch Processing**: Optimize the scoring engine to handle multiple clips simultaneously on multi-GPU setups.

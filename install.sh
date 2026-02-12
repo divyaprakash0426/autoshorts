@@ -230,13 +230,6 @@ except Exception as e:
     print(f"✗ FlashAttention: {e}")
     sys.exit(1)
 
-try:
-    import huggingface_hub
-    print(f"✓ HuggingFace Hub available")
-except Exception as e:
-    print(f"✗ HuggingFace Hub: {e}")
-    sys.exit(1)
-
 print("\n✓ All critical dependencies OK")
 VERIFY
 
@@ -245,16 +238,10 @@ echo "=========================================="
 echo "  Step 7: Download AI Models"
 echo "=========================================="
 echo ""
-echo "Downloading local models for offline operation..."
-echo ""
-echo "Downloading Qwen3-VL-4B-Instruct-FP8 model (~3GB)..."
-python src/download_models.py
-
-echo ""
 echo "Downloading Qwen3-TTS VoiceDesign model (~2GB)..."
 python -c "from src.tts_generator import download_model; download_model()"
 
-echo -e "${GREEN}✓ Models downloaded successfully${NC}"
+echo -e "${GREEN}✓ TTS model downloaded successfully${NC}"
 
 echo ""
 echo "=========================================="

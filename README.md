@@ -26,7 +26,8 @@ Here are some shorts automatically generated from gameplay footage:
 
 ### 🎯 AI-Powered Scene Analysis
 
-- **Multi-Provider Support**: Choose between **OpenAI** (GPT-5-mini, GPT-4o) or **Google Gemini** for scene analysis
+- **Multi-Provider Support**: Choose between **OpenAI** (GPT-5-mini, GPT-4o) or **Google Gemini** for scene analysis, or run in `local` mode with heuristic scoring (no API needed)
+- **Gemini Deep Analysis Mode** 🧠: Upload full video to Gemini for context-aware scene detection — the AI sees the whole game, not just short clips
 - **7 Semantic Types** (all analyzed automatically):
   - `action` — Combat, kills, intense gameplay, close calls
   - `funny` — Fails, glitches, unexpected humor, comedic timing
@@ -40,7 +41,7 @@ Here are some shorts automatically generated from gameplay footage:
 
 - **Speech Mode**: Uses OpenAI Whisper to transcribe voice/commentary
 - **AI Captions Mode**: AI-generated contextual captions for gameplay without voice
-- **Caption Styles**: 
+- **Caption Styles**:
   - Classic: `gaming`, `dramatic`, `funny`, `minimal`
   - **GenZ Mode** ✨: `genz` - Slang-heavy reactions ("bruh 💀", "no cap", "finna")
   - **Story Modes** ✨: Narrative-style captions
@@ -90,7 +91,7 @@ AutoShorts is designed to work even when optimal components fail:
 |-----------|---------|----------|
 | **Video Encoding** | NVENC (GPU) | libx264 (CPU) |
 | **Subtitle Rendering** | PyCaps (styled) | FFmpeg burn-in (basic) |
-| **AI Analysis** | OpenAI/Gemini API | Heuristic scoring (local) |
+| **AI Analysis** | OpenAI/Gemini API | Heuristic scoring (`local` mode) |
 | **TTS Device** | GPU (6GB+ VRAM) | CPU Fallback (slower) |
 
 ---
@@ -171,8 +172,9 @@ cp .env.example .env
 
 | Category | Variable | Description |
 |----------|----------|-------------|
-| **AI Provider** | `AI_PROVIDER` | `openai`, `gemini`, or `local` |
+| **AI Provider** | `AI_PROVIDER` | `openai`, `gemini`, or `local` (heuristic-only, no API) |
 | | `AI_ANALYSIS_ENABLED` | Enable/disable AI scene analysis |
+| | `GEMINI_DEEP_ANALYSIS` | Gemini-only: upload full video for smarter scene detection (slower initial upload, better results) |
 | | `OPENAI_MODEL` | Model for analysis (e.g., `gpt-5-mini`) |
 | | `AI_SCORE_WEIGHT` | How much to weight AI vs heuristic (0.0-1.0) |
 | **Semantic Analysis** | `SEMANTIC_TYPES` | All 7 types analyzed: `action`, `funny`, `clutch`, `wtf`, `epic_fail`, `hype`, `skill` |
@@ -210,8 +212,16 @@ See `.env.example` for the complete list with detailed descriptions.
 Launch the local dashboard to configure settings, start jobs, and preview clips:
 
 ```bash
-streamlit run src/dashboard/app.py
+streamlit run src/dashboard/About.py
 ```
+
+| About | Generate | Browse |
+| :---: | :---: | :---: |
+| ![About](assets/dashboard/dashboard_about.png) | ![Generate](assets/dashboard/dashboard_generate.png) | ![Browse](assets/dashboard/dashboard_browse.png) |
+
+| Features | Settings | Roadmap |
+| :---: | :---: | :---: |
+| ![Features](assets/dashboard/dashboard_features.png) | ![Settings](assets/dashboard/dashboard_settings.png) | ![Coming Soon](assets/dashboard/dashboard_coming_soon.png) |
 
 ### Output Structure
 

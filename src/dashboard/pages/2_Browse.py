@@ -34,8 +34,9 @@ def _render_video_grid(videos, cols_count=3, key_prefix="vid"):
         selected_path = st.session_state[selected_key]
         if selected_path.exists():
             st.markdown(f"""
-                <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); 
-                            padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
+                <div style="background: linear-gradient(135deg, #1A1D2E 0%, #1E3A5F 100%); 
+                            padding: 1rem; border-radius: 10px; margin-bottom: 1rem;
+                            border: 1px solid #2D3348;">
                     <h3 style="margin: 0;">▶️ {selected_path.name}</h3>
                 </div>
             """, unsafe_allow_html=True)
@@ -78,9 +79,10 @@ def _render_video_grid(videos, cols_count=3, key_prefix="vid"):
                         st.image(str(info.thumbnail), width="stretch")
                     else:
                         st.markdown("""
-                            <div style="background: #1a1a2e; height: 120px; display: flex; 
+                            <div style="background: #1E2030; height: 120px; display: flex; 
                                         align-items: center; justify-content: center; 
-                                        border-radius: 8px; font-size: 2rem;">
+                                        border-radius: 8px; font-size: 2rem;
+                                        border: 1px solid #2D3348;">
                                 🎬
                             </div>
                         """, unsafe_allow_html=True)

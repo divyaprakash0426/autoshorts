@@ -6,7 +6,7 @@ This file documents the end-to-end flow for AutoShorts. The system processes vid
 
 ```
 src/
-├── ai_providers.py         # AI Provider abstraction (Gemini, OpenAI, Qwen3VL)
+├── ai_providers.py         # AI Provider abstraction (Gemini, OpenAI, Local)
 ├── shorts.py               # Main pipeline orchestration
 ├── subtitle_generator.py   # Subtitle generation + PyCaps rendering
 ├── tts_generator.py        # Qwen3-TTS VoiceDesign + audio mixing
@@ -120,7 +120,7 @@ See `flow_diagram.mmd` for the full Mermaid diagram, rendered to `flow_diagram.p
 | Variable | Description |
 |----------|-------------|
 | `GEMINI_DEEP_ANALYSIS` | Enable full-video Deep Analysis mode |
-| `AI_PROVIDER` | gemini, openai, qwen3vl, local |
+| `AI_PROVIDER` | gemini, openai, local |
 | `AI_ANALYSIS_ENABLED` | Enable AI scene ranking |
 | `ENABLE_SUBTITLES` | Generate/burn subtitles |
 | `ENABLE_TTS` | Generate voiceover |

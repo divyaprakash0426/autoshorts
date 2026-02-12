@@ -65,7 +65,7 @@ def render() -> None:
             x=durations, nbins=10, 
             labels={"x": "Duration (s)"}, 
             title="📈 Clip Duration Distribution",
-            color_discrete_sequence=["#00d26a"]
+            color_discrete_sequence=["#6C63FF"]
         )
         fig.update_layout(
             plot_bgcolor='rgba(0,0,0,0)',
@@ -78,7 +78,7 @@ def render() -> None:
             x=names[-10:], y=sizes[-10:], 
             labels={"x": "Clip", "y": "Size (MB)"}, 
             title="💾 Recent Clip Sizes (last 10)",
-            color_discrete_sequence=["#00d26a"]
+            color_discrete_sequence=["#6C63FF"]
         )
         fig2.update_layout(
             plot_bgcolor='rgba(0,0,0,0)',

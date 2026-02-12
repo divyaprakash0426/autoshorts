@@ -25,26 +25,27 @@ def render() -> None:
     st.markdown("""
         <style>
         .feature-item {
-            background: linear-gradient(145deg, rgba(0, 255, 136, 0.03) 0%, rgba(0, 210, 106, 0.05) 100%);
-            border-left: 3px solid #00d26a;
+            background: linear-gradient(145deg, rgba(108, 99, 255, 0.04) 0%, rgba(90, 82, 213, 0.06) 100%);
+            border-left: 3px solid #6C63FF;
             padding: 1rem 1.25rem;
             margin: 0.75rem 0;
             border-radius: 0 10px 10px 0;
-            transition: all 0.2s;
+            transition: all 0.25s ease;
         }
         .feature-item:hover {
-            background: linear-gradient(145deg, rgba(0, 255, 136, 0.08) 0%, rgba(0, 210, 106, 0.10) 100%);
+            background: linear-gradient(145deg, rgba(108, 99, 255, 0.08) 0%, rgba(90, 82, 213, 0.12) 100%);
             border-left-width: 4px;
-            transform: translateX(2px);
+            transform: translateX(3px);
+            box-shadow: 0 2px 12px rgba(108, 99, 255, 0.1);
         }
         .feature-item h4 {
             margin: 0 0 0.5rem 0;
             font-size: 1.1rem;
-            color: #00ff88;
+            color: #8B85FF;
         }
         .feature-item p {
             margin: 0;
-            color: #a0a0a0;
+            color: #94A3B8;
             line-height: 1.5;
         }
         </style>
@@ -104,26 +105,19 @@ def render() -> None:
     
     st.divider()
     
-    # Phase 3 - Visual Intelligence
-    st.markdown("### 🧠 Phase 3: Visual Intelligence")
-    st.caption("Focus: Moving beyond center-cropping to active scene understanding")
+    # Phase 3 - Universal Clipping & Visual Intelligence
+    st.markdown("### 🧠 Phase 3: Universal Clipping & Visual Intelligence")
+    st.caption("Focus: Supporting all video content types and smarter scene understanding")
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("""
             <div class="feature-item">
-                <h4>🎯 Intelligent Auto-Zoom</h4>
-                <p>YOLO / RT-DETR integration to identify and dynamically follow 
-                the subject (player, car, crosshair) in 9:16 crop</p>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("""
-            <div class="feature-item">
-                <h4>🎬 Scene Transition Styles</h4>
-                <p>AI-generated transitions between merged highlights 
-                for more cinematic flow</p>
+                <h4>🎬 Universal Video Type Support</h4>
+                <p>Clip any video, not just gaming — Podcasts, Entertainment, Sports, 
+                Vlogs, TV Shows, Documentaries, Music, Educational, Interviews, 
+                Comedy, News, Esports, Cooking & DIY, Fitness, and more</p>
             </div>
         """, unsafe_allow_html=True)
         

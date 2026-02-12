@@ -111,12 +111,12 @@ def render_config_panel(sections: Tuple[EnvSection, ...]) -> Tuple[Dict[str, str
     st.markdown("""
         <style>
         .stExpander {
-            border: 1px solid #333;
+            border: 1px solid #2D3348;
             border-radius: 8px;
             margin-bottom: 0.5rem;
         }
         .stExpander > div:first-child {
-            background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
+            background: linear-gradient(90deg, #1A1D2E 0%, #1E3A5F 100%);
             border-radius: 8px 8px 0 0;
         }
         </style>

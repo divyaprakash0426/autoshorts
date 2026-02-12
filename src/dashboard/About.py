@@ -30,25 +30,19 @@ def main() -> None:
     st.markdown(get_shared_css(), unsafe_allow_html=True)
     
 
-    # 2. Logo (Centered)
+    # 2. Logo + Summary (Centered together)
     if LOGO_PATH.exists():
-        # Use columns to center the image
-        lc, mc, rc = st.columns([1, 0.8, 1])
+        lc, mc, rc = st.columns([1, 2, 1])
         with mc:
             st.image(str(LOGO_PATH), width=180)
-            
-    # 3. Summary Text (Centered)
-    # Wrapped in a div to ensure text alignment since it's outside the hero-container
-    st.markdown("""
-        <div style="text-align: center; margin-left: 13rem; margin-bottom: 1rem;">
-            <p class="hero-summary">
-                Turn hours of raw gameplay into viral short-form content in minutes. 
-                AutoShorts intelligently analyzes your footage to detect high-impact moments, 
-                generates professional voiceovers, and applies dynamic captions—optimized 
-                for TikTok, YouTube Shorts, and Instagram Reels.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
+            st.markdown("""
+                <p class="hero-summary">
+                    Turn hours of raw footage into viral short-form content in minutes. 
+                    AutoShorts intelligently analyzes your videos to detect high-impact moments, 
+                    generates professional voiceovers, and applies dynamic captions—optimized 
+                    for TikTok, YouTube Shorts, and Instagram Reels.
+                </p>
+            """, unsafe_allow_html=True)
 
     # Examples Divider
     st.divider()
@@ -81,11 +75,11 @@ def main() -> None:
                     <span class="feature-pill">📊 Smart Ranking</span>
                     <span class="feature-pill">⏱️ Auto-Cuts</span>
                 </div>
-                <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem;">Automatically detects 7 semantic highlight types:</p>
+                <p style="font-size: 0.9rem; color: #94A3B8; margin-bottom: 0.5rem;">Automatically detects 7 semantic highlight types:</p>
                 <div>
-                    <span class="feature-pill" style="border-color: #ff4b4b; background: rgba(255, 75, 75, 0.1);">🔥 Action</span>
-                    <span class="feature-pill" style="border-color: #ffd700; background: rgba(255, 215, 0, 0.1);">😂 Funny</span>
-                    <span class="feature-pill" style="border-color: #00d26a; background: rgba(0, 210, 106, 0.1);">🏆 Clutch</span>
+                    <span class="feature-pill" style="border-color: #F87171; background: rgba(248, 113, 113, 0.1);">🔥 Action</span>
+                    <span class="feature-pill" style="border-color: #FBBF24; background: rgba(251, 191, 36, 0.1);">😂 Funny</span>
+                    <span class="feature-pill" style="border-color: #34D399; background: rgba(52, 211, 153, 0.1);">🏆 Clutch</span>
                     <span class="feature-pill">🤨 WTF</span>
                     <span class="feature-pill">💀 Fail</span>
                 </div>
@@ -103,7 +97,7 @@ def main() -> None:
                     <span class="feature-pill">📝 AI Commentary</span>
                     <span class="feature-pill">✨ Auto-Style Match</span>
                 </div>
-                <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem;">Dynamic styles for every mood:</p>
+                <p style="font-size: 0.9rem; color: #94A3B8; margin-bottom: 0.5rem;">Dynamic styles for every mood:</p>
                 <div>
                     <span class="feature-pill">🎮 Gaming</span>
                     <span class="feature-pill">📢 News</span>
@@ -124,7 +118,7 @@ def main() -> None:
                     <span class="feature-pill">🎭 Style-Adaptive</span>
                     <span class="feature-pill">🌍 10+ Languages</span>
                 </div>
-                <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem;">Voices that match the vibe:</p>
+                <p style="font-size: 0.9rem; color: #94A3B8; margin-bottom: 0.5rem;">Voices that match the vibe:</p>
                 <div>
                     <span class="feature-pill">⚡ Energetic (GenZ)</span>
                     <span class="feature-pill">👔 Professional</span>
@@ -146,7 +140,7 @@ def main() -> None:
                     <span class="feature-pill">🔊 GPU Audio Analysis</span>
                 </div>
                 <div>
-                    <span class="feature-pill" style="background: rgba(118, 185, 0, 0.15); border-color: #76b900;">✅ NVIDIA Optimized</span>
+                    <span class="feature-pill" style="background: rgba(52, 211, 153, 0.1); border-color: #34D399;">✅ NVIDIA Optimized</span>
                     <span class="feature-pill">10x Faster than CPU</span>
                 </div>
             </div>
@@ -188,7 +182,7 @@ def main() -> None:
     
     with cols[3]:
         tts_status = "ON" if str(values.get("ENABLE_TTS", "true")).lower() in ("true", "1") else "OFF"
-        tts_color = "#00d26a" if tts_status == "ON" else "#ff6b6b"
+        tts_color = "#34D399" if tts_status == "ON" else "#F87171"
         st.markdown(f"""
             <div class="stats-card">
                 <div class="stats-value" style="color: {tts_color};">{tts_status}</div>
@@ -205,31 +199,39 @@ def main() -> None:
     
     with steps[0]:
         st.markdown("""
-            **1️⃣ Add Videos**
-            
-            Put your gameplay videos in the `gameplay/` folder
-        """)
+            <div class="step-card">
+                <div class="step-number">1</div>
+                <h4>Add Videos</h4>
+                <p>Put your videos in the <code>gameplay/</code> folder or use the file picker</p>
+            </div>
+        """, unsafe_allow_html=True)
     
     with steps[1]:
         st.markdown("""
-            **2️⃣ Configure**
-            
-            Adjust settings in ⚙️ Settings or use defaults
-        """)
+            <div class="step-card">
+                <div class="step-number">2</div>
+                <h4>Configure</h4>
+                <p>Adjust settings in ⚙️ Settings or use the smart defaults</p>
+            </div>
+        """, unsafe_allow_html=True)
     
     with steps[2]:
         st.markdown("""
-            **3️⃣ Generate**
-            
-            Click **Start Processing** on the Generate page
-        """)
+            <div class="step-card">
+                <div class="step-number">3</div>
+                <h4>Generate</h4>
+                <p>Click <strong>Start Processing</strong> on the Generate page</p>
+            </div>
+        """, unsafe_allow_html=True)
     
     with steps[3]:
         st.markdown("""
-            **4️⃣ Browse**
-            
-            View and manage clips in 📁 Browse
-        """)
+            <div class="step-card">
+                <div class="step-number">4</div>
+                <h4>Browse</h4>
+                <p>View and manage your clips in 📁 Browse</p>
+            </div>
+        """, unsafe_allow_html=True)
     
     st.divider()
     
