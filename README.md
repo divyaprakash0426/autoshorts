@@ -125,6 +125,10 @@ cd autoshorts
 # Run the installer (uses conda/micromamba automatically)
 make install
 
+# Setup environment variables
+cp .env.example .env
+# Edit .env and add your API keys (Gemini/OpenAI) 
+
 # Activate the environment
 overlay use .venv/bin/activate.nu    # For Nushell
 # OR

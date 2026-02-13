@@ -13,7 +13,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -1114,16 +1113,150 @@ def generate_subtitles(
             logging.warning("No subtitles generated (empty SRT)")
             return None
         
+        # === PRE-GENERATE TTS FOR AUTO MODE (non-story) ===
+        # For auto/regular modes, generate TTS BEFORE PyCaps so we can:
+        # 1. Adjust SRT timings to match actual TTS audio durations
+        # 2. Extend video if TTS is longer than video
+        # This mirrors story mode's approach and prevents subtitle/voiceover desync
+        auto_tts_path = srt_path.with_suffix(".auto_tts.wav")
+        
+        if mode == "ai_captions" and not story_narration:  # Only for non-story caption flows
+            try:
+                from tts_generator import is_tts_enabled, QwenTTS, preprocess_text_for_tts, generate_voice_description
+                
+                if is_tts_enabled():
+                    import gc
+                    import torch
+                    import numpy as np
+                    import scipy.io.wavfile as wav_io
+                    
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        logging.info("GPU memory cleared before TTS loading")
+                    
+                    tts = QwenTTS.get_instance()
+                    tts._ensure_initialized()
+                    if tts._model is None:
+                        logging.warning("TTS model unavailable for auto pre-generation, keeping subtitles only")
+                    else:
+                        # Get voice description
+                        voice_context = caption_style if caption_style else (detected_category or "action")
+                        voice_desc = generate_voice_description(voice_context)
+                        first_line = voice_desc.split('\n')[0] if '\n' in voice_desc else voice_desc[:60]
+                        logging.info(f"Generating voice for context: {voice_context}")
+                        logging.info(f"Voice: {first_line}...")
+                        
+                        # Parse the SRT to get captions
+                        captions_for_tts = _parse_srt_with_timing(srt_path)
+                        
+                        if captions_for_tts:
+                            audio_segments = []
+                            updated_captions = []
+                            current_audio_time = 0.0
+                            sample_rate = 24000
+                            
+                            logging.info(f"Generating TTS for {len(captions_for_tts)} captions ({detected_category or 'auto'} mode)")
+                            
+                            for i, cap in enumerate(captions_for_tts):
+                                raw_text = cap.get("text", "").strip()
+                                start_time = cap.get("start", 0.0)
+                                end_time = cap.get("end", start_time + 2.0)
+                                fallback_start = max(start_time, current_audio_time)
+                                fallback_end = max(fallback_start + 0.1, fallback_start + (end_time - start_time))
+                                
+                                text = preprocess_text_for_tts(_sanitize_tts_input(raw_text))
+                                if not text:
+                                    updated_captions.append({"start": fallback_start, "end": fallback_end, "text": raw_text})
+                                    continue
+                                
+                                # Add silence gap to reach this caption's start
+                                silence_dur = max(0, start_time - current_audio_time)
+                                if silence_dur > 0:
+                                    silence = np.zeros(int(silence_dur * sample_rate), dtype=np.float32)
+                                    audio_segments.append(silence)
+                                    current_audio_time += silence_dur
+                                
+                                # Track true audio start for this caption after any carry-over shift
+                                actual_start = current_audio_time
+                                
+                                try:
+                                    wavs, sr = tts._model.generate_voice_design(
+                                        text=text,
+                                        instruct=voice_desc,
+                                        language=tts.config.get_language_name(),
+                                    )
+                                    sample_rate = sr
+                                    
+                                    if wavs and len(wavs) > 0:
+                                        audio = wavs[0].astype(np.float32)
+                                        tts_dur = len(audio) / sample_rate
+                                        audio_segments.append(audio)
+                                        current_audio_time += tts_dur
+                                        updated_captions.append({
+                                            "start": actual_start,
+                                            "end": max(actual_start + 0.1, current_audio_time),
+                                            "text": raw_text
+                                        })
+                                    else:
+                                        updated_captions.append({"start": fallback_start, "end": fallback_end, "text": raw_text})
+                                except Exception as e:
+                                    logging.warning(f"TTS failed for caption {i}: {e}")
+                                    updated_captions.append({"start": fallback_start, "end": fallback_end, "text": raw_text})
+                            
+                            if audio_segments:
+                                final_audio = np.concatenate(audio_segments)
+                                final_audio_int16 = (final_audio * 32767).astype(np.int16)
+                                wav_io.write(str(auto_tts_path), sample_rate, final_audio_int16)
+                                total_tts_dur = len(final_audio) / sample_rate
+                                logging.info(f"TTS audio generated: {total_tts_dur:.1f}s for {len(captions_for_tts)} captions")
+                                
+                                # Rewrite SRT using actual generated audio timing to keep subtitle/voice sync exact.
+                                original_end = max((cap.get("end", 0.0) for cap in captions_for_tts), default=0.0)
+                                adjusted_end = max((cap.get("end", 0.0) for cap in updated_captions), default=0.0)
+                                shift = max(0.0, adjusted_end - original_end)
+                                logging.info(f"Adjusted SRT timing: shifted {shift:.1f}s to match TTS durations")
+                                
+                                srt_lines = []
+                                for idx, cap in enumerate(updated_captions, 1):
+                                    start_ts = _format_timestamp(cap["start"])
+                                    end_ts = _format_timestamp(cap["end"])
+                                    srt_lines.append(str(idx))
+                                    srt_lines.append(f"{start_ts} --> {end_ts}")
+                                    srt_lines.append(cap["text"])
+                                    srt_lines.append("")
+                                
+                                with open(srt_path, "w", encoding="utf-8") as f:
+                                    f.write("\n".join(srt_lines))
+                        
+                        # Clean up TTS model memory
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    
+            except ImportError:
+                logging.debug("TTS module not available, skipping pre-generation")
+            except Exception as e:
+                logging.warning(f"TTS pre-generation failed for auto mode: {e}")
+                # Clean up failed TTS file
+                if auto_tts_path.exists():
+                    try:
+                        auto_tts_path.unlink()
+                    except Exception:
+                        pass
+        
         # === EXTEND VIDEO TO MATCH TTS DURATION (if needed) ===
         # This MUST happen BEFORE PyCaps so subtitles are rendered on the full-length video
         story_tts_path = srt_path.with_suffix(".story_tts.wav")
+        # Use whichever TTS audio exists (story mode or auto mode)
+        pre_generated_tts_path = story_tts_path if story_tts_path.exists() else (auto_tts_path if auto_tts_path.exists() else None)
         video_for_pycaps = video_path
         extended_video_temp = None
         
-        if story_tts_path.exists() and render_meta:
+        if pre_generated_tts_path and render_meta:
             from tts_generator import get_audio_duration, get_video_duration, rerender_video_longer, RenderMeta
             
-            tts_duration = get_audio_duration(story_tts_path)
+            tts_duration = get_audio_duration(pre_generated_tts_path)
             video_duration = get_video_duration(video_path)
             
             if tts_duration > video_duration + 1.0:  # TTS is significantly longer
@@ -1177,19 +1310,27 @@ def generate_subtitles(
         
         # --- TTS Voiceover (Optional) ---
         try:
-            from tts_generator import is_tts_enabled, QwenTTS, TTSConfig, RenderMeta
+            from tts_generator import is_tts_enabled
             
             if is_tts_enabled():
                 logging.info("Generating TTS voiceover...")
                 
-                # Check if we have pre-generated story TTS audio (from story mode)
+                # Check if we have pre-generated TTS audio (story mode or auto mode)
                 # This avoids regenerating TTS which would cause sync issues
                 story_tts_path = srt_path.with_suffix(".story_tts.wav")
                 
+                # Pick whichever pre-generated TTS exists
                 if story_tts_path.exists():
-                    # === USE PRE-GENERATED STORY TTS ===
-                    logging.info("Using pre-generated story TTS audio (perfect sync)")
-                    voiceover_path = story_tts_path
+                    pre_gen_tts = story_tts_path
+                elif auto_tts_path.exists():
+                    pre_gen_tts = auto_tts_path
+                else:
+                    pre_gen_tts = None
+                
+                if pre_gen_tts:
+                    # === USE PRE-GENERATED TTS (story or auto mode) ===
+                    logging.info(f"Using pre-generated TTS audio (perfect sync)")
+                    voiceover_path = pre_gen_tts
                     
                     # Mix voiceover with video
                     mixed_output = output_path.with_stem(output_path.stem + "_voiced")
@@ -1236,7 +1377,7 @@ def generate_subtitles(
                     
                     # Cleanup the pre-generated TTS file
                     try:
-                        story_tts_path.unlink()
+                        pre_gen_tts.unlink()
                     except Exception:
                         pass
                         
@@ -1247,90 +1388,12 @@ def generate_subtitles(
                         except Exception:
                             pass
                 else:
-                    # === GENERATE TTS ON-THE-FLY (non-story modes) ===
-                    # Parse SRT with timing for proper audio alignment
-                    captions = _parse_srt_with_timing(srt_path)
-                    
-                    if captions:
-                        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
-                            voiceover_path = Path(tmp_audio.name)
-                        
-                        # === MEMORY CLEANUP BEFORE TTS ===
-                        # Qwen3-TTS requires ~4-6GB VRAM. Clear any cached tensors
-                        # from PyCaps/Playwright/video processing before loading.
-                        import gc
-                        gc.collect()
-                        
+                    logging.warning("No pre-generated TTS audio found; skipping legacy on-the-fly TTS fallback to preserve sync")
+                    if extended_video_temp and extended_video_temp.exists():
                         try:
-                            import torch
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                                torch.cuda.synchronize()
-                                logging.info("GPU memory cleared before TTS loading")
+                            extended_video_temp.unlink()
                         except Exception:
                             pass
-                        # === END MEMORY CLEANUP ===
-                        
-                        # Generate per-caption TTS with timing alignment
-                        tts = QwenTTS.get_instance()
-                        result_audio = tts.generate_for_captions(
-                            captions,
-                            voiceover_path,
-                            detected_category=detected_category or "action",
-                            caption_style=caption_style  # Pass caption style for voice selection
-                        )
-                        
-                        if result_audio and result_audio.exists():
-                            # Mix voiceover with video
-                            mixed_output = output_path.with_stem(output_path.stem + "_voiced")
-                            
-                            game_vol = float(os.getenv("TTS_GAME_AUDIO_VOLUME", "0.3"))
-                            voice_vol = float(os.getenv("TTS_VOICEOVER_VOLUME", "1.0"))
-                            
-                            # Convert render_meta dict to RenderMeta dataclass if provided
-                            tts_render_meta = None
-                            if render_meta:
-                                try:
-                                    tts_render_meta = RenderMeta(
-                                        source_path=Path(render_meta["source_path"]),
-                                        start_time=render_meta["start_time"],
-                                        original_duration=render_meta["duration"],
-                                        output_width=render_meta["output_width"],
-                                        output_height=render_meta["output_height"],
-                                        crop_x=render_meta["crop_x"],
-                                        crop_y=render_meta["crop_y"],
-                                        crop_w=render_meta["crop_w"],
-                                        crop_h=render_meta["crop_h"],
-                                        bg_width=render_meta.get("bg_width", render_meta["output_width"]),
-                                        bg_height=render_meta.get("bg_height", render_meta["output_height"]),
-                                        is_vertical_bg=render_meta.get("is_vertical_bg", True),
-                                    )
-                                except (KeyError, TypeError) as e:
-                                    logging.warning(f"Could not create RenderMeta: {e}")
-                            
-                            if mix_audio_with_video(output_path, voiceover_path, mixed_output, game_vol, voice_vol, tts_render_meta):
-                                # Replace subtitled version with voiced version
-                                output_path.unlink()
-                                mixed_output.rename(output_path)
-                                logging.info(f"TTS voiceover added successfully")
-                            else:
-                                logging.warning("TTS audio mixing failed, keeping subtitles only")
-                        
-                        # Cleanup temp voiceover file
-                        try:
-                            voiceover_path.unlink()
-                        except Exception:
-                            pass
-                        
-                        # === CLEANUP TTS MEMORY AFTER USE ===
-                        # Free VRAM for subsequent clips
-                        try:
-                            import torch
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                        except Exception:
-                            pass
-                        # === END TTS CLEANUP ===
                     
         except ImportError:
             logging.debug("TTS module not available, skipping voiceover")
@@ -1370,6 +1433,21 @@ def _extract_srt_text(srt_path: Path) -> str:
         return " ".join(text_lines)
     except Exception:
         return ""
+
+
+def _sanitize_tts_input(text: str) -> str:
+    """Sanitize caption text for TTS while preserving visible subtitle text."""
+    import unicodedata
+
+    if not text:
+        return ""
+
+    cleaned = re.sub(r"\*[^*]+\*", "", text).strip()
+    cleaned = cleaned.replace("\u200d", "").replace("\ufe0f", "").replace("\ufe0e", "")
+    cleaned = "".join(ch for ch in cleaned if unicodedata.category(ch) not in ("So", "Sk"))
+    cleaned = re.sub(r"[*#_~`]", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 
 def _parse_srt_with_timing(srt_path: Path) -> list:
@@ -1423,14 +1501,7 @@ def _parse_srt_with_timing(srt_path: Path) -> list:
             # Get text (remaining lines)
             text = " ".join(lines[text_start_idx:]).strip()
             
-            # Strip emojis and non-ascii characters for clean TTS
-            import re
-            # Keep basic punctuation for better TTS prosody (pacing), but remove emojis/symbols
-            # This regex keeps ASCII letters, numbers, spaces, and basic punctuation
-            text = re.sub(r'[^\x20-\x7E]+', '', text) 
-            # Further strip specific symbols that TTS might try to 'read' literally
-            text = re.sub(r'[*#_~`]', '', text)
-            # Cleanup extra spaces
+            # Preserve original subtitle text (including emojis) for rendering.
             text = re.sub(r'\s+', ' ', text).strip()
             
             if text:
