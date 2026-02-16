@@ -16,9 +16,23 @@ AutoShorts analyzes your gameplay videos to identify the most engaging moments�
 
 Here are some shorts automatically generated from gameplay footage:
 
-| Sample 1 | Sample 2 | Sample 3 | Sample 4 |
+| sample 1 | sample 2 | sample 3 | sample 4 |
 | :---: | :---: | :---: | :---: |
-| ![Sample 1](generated/showcase/indianajones_pt1_scene-0.gif) | ![Sample 2](generated/showcase/indianajones_pt1_scene-1.gif) | ![Sample 3](generated/showcase/indianajones_pt1_scene-2.gif) | ![Sample 4](generated/showcase/indianajones_pt1_scene-3.gif) |
+| ![sample 1](generated/showcase/indianajones_pt1_scene-0.gif) | ![sample 2](generated/showcase/indianajones_pt1_scene-1.gif) | ![sample 3](generated/showcase/indianajones_pt1_scene-2.gif) | ![sample 4](generated/showcase/indianajones_pt1_scene-3.gif) |
+
+### 🎥 Showcase: Multi-Language & Style Generation
+
+AutoShorts automatically adapts its editing style, captions, and voiceover personality based on the content and target language. Here are some examples generated entirely by the pipeline:
+
+| Content | Style | Language | Video |
+| :--- | :--- | :--- | :--- |
+| **Fortnite** | Story Roast | 🇺🇸 English | [Watch Part 1](https://www.youtube.com/shorts/tTUipTAdBlk) |
+| **Indiana Jones** | GenZ Slang | 🇺🇸 English | [Watch Part 1](https://www.youtube.com/shorts/VAOlR5RAX14) |
+| **Battlefield 6** | Dramatic Story | 🇯🇵 Japanese | [Watch Part 1](https://www.youtube.com/shorts/DYNEr1CzTpY) |
+| **Indiana Jones** | Story News | 🇨🇳 Chinese | [Watch Part 1](https://www.youtube.com/shorts/kGRrpu66fpk) |
+| **Fortnite** | Story Roast | 🇪🇸 Spanish | [Watch Part 1](https://www.youtube.com/shorts/5QcelWS1oSo) |
+| **Fortnite** | Story Roast | 🇷🇺 Russian | [Watch Part 1](https://www.youtube.com/shorts/A06FdnycTYo) |
+| **Indiana Jones** | Auto Gameplay | 🇧🇷 Portuguese | [Watch Part 1](https://www.youtube.com/shorts/qDFsTnH9qxc) |
 
 ---
 
@@ -88,7 +102,7 @@ Here are some shorts automatically generated from gameplay footage:
 AutoShorts is designed to work even when optimal components fail:
 
 | Component | Primary | Fallback |
-|-----------|---------|----------|
+| :--- | :--- | :--- |
 | **Video Encoding** | NVENC (GPU) | libx264 (CPU) |
 | **Subtitle Rendering** | PyCaps (styled) | FFmpeg burn-in (basic) |
 | **AI Analysis** | OpenAI/Gemini API | Heuristic scoring (`local` mode) |
@@ -175,7 +189,7 @@ cp .env.example .env
 ### Key Configuration Options
 
 | Category | Variable | Description |
-|----------|----------|-------------|
+| :--- | :--- | :--- |
 | **AI Provider** | `AI_PROVIDER` | `openai`, `gemini`, or `local` (heuristic-only, no API) |
 | | `AI_ANALYSIS_ENABLED` | Enable/disable AI scene analysis |
 | | `GEMINI_DEEP_ANALYSIS` | Gemini-only: upload full video for smarter scene detection (slower initial upload, better results) |
@@ -229,7 +243,7 @@ streamlit run src/dashboard/About.py
 
 ### Output Structure
 
-```
+```text
 generated/
 ├── video_name scene-0.mp4          # Rendered short clip
 ├── video_name scene-0_sub.json     # Subtitle data
@@ -262,7 +276,7 @@ pytest -q
 For faster iteration during development, you can skip expensive steps using these environment variables in your `.env`:
 
 | Variable | Description |
-|----------|-------------|
+| :--- | :--- |
 | `DEBUG_SKIP_ANALYSIS=1` | Skip AI scene analysis (uses cached/heuristic scores) |
 | `DEBUG_SKIP_RENDER=1` | Skip video rendering (useful for testing analysis only) |
 | `DEBUG_RENDERED_CLIPS="path1:category,path2"` | Test with specific pre-rendered clips |
@@ -281,7 +295,7 @@ DEBUG_RENDERED_CLIPS="generated/test_clip.mp4:action"
 ## 🔧 Troubleshooting
 
 | Issue | Solution |
-|-------|----------|
+| :--- | :--- |
 | **"CUDA not available"** | Ensure `--gpus all` (Docker) or CUDA toolkit is installed |
 | **NVENC Error** | Falls back to `libx264` automatically; check GPU driver |
 | **PyCaps fails** | Falls back to FFmpeg burn-in subtitles automatically |
