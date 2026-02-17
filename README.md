@@ -191,6 +191,7 @@ cp .env.example .env
 | Category | Variable | Description |
 | :--- | :--- | :--- |
 | **AI Provider** | `AI_PROVIDER` | `openai`, `gemini`, or `local` (heuristic-only, no API) |
+| | `VIDEO_TYPE` | Content type preset (`gaming`, `podcasts`, `sports`, `educational`, etc.) used for universal clipping + caption style defaults |
 | | `AI_ANALYSIS_ENABLED` | Enable/disable AI scene analysis |
 | | `GEMINI_DEEP_ANALYSIS` | Gemini-only: upload full video for smarter scene detection (slower initial upload, better results) |
 | | `OPENAI_MODEL` | Model for analysis (e.g., `gpt-5-mini`) |
@@ -199,7 +200,7 @@ cp .env.example .env
 | | `CANDIDATE_CLIP_COUNT` | Number of clips to analyze |
 | **Subtitles** | `ENABLE_SUBTITLES` | Enable subtitle generation |
 | | `SUBTITLE_MODE` | `speech` (Whisper), `ai_captions`, or `none` |
-| | `CAPTION_STYLE` | `gaming`, `dramatic`, `funny`, `minimal`, `genz`, `story_news`, `story_roast`, `story_creepypasta`, `story_dramatic`, `auto` |
+| | `CAPTION_STYLE` | Gaming styles + story/genz + universal styles like `podcast_quote`, `sports_playbyplay`, `educational_explainer`, `news_breaking`, or `auto` |
 | | `PYCAPS_TEMPLATE` | Visual template for captions |
 | **TTS Voiceover** | `ENABLE_TTS` | Enable Qwen3-TTS voiceover |
 | | `TTS_LANGUAGE` | Language code (`en`, `zh`, `ja`, `ko`, `de`, `fr`, `ru`, `pt`, `es`, `it`) |

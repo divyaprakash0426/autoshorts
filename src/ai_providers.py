@@ -1287,6 +1287,118 @@ Write 2-3 sentences per caption. Build tension, ominous tone, slow reveals. Fewe
         "story_dramatic": """Generate epic cinematic narration.
 Examples: "In the arena of champions, legends are born.", "The crowd holds its breath.", "One shot. One chance. Immortality awaits."
 Write 2-3 sentences per caption. Epic tone, powerful delivery, movie trailer style. Fewer captions (2-4 max)."""
+        ,
+        "podcast_quote": """Generate crisp pull-quote captions from podcast moments.
+Examples: "That's the real problem.", "Clip this part.", "He actually said that."
+Keep captions concise and quotable (3-10 words). Prioritize opinionated or insightful lines.""",
+
+        "podcast_highlight": """Generate conversational podcast highlight captions.
+Examples: "This is where it gets interesting.", "Here's the key takeaway.", "Wait, that's huge."
+Use natural spoken phrasing. Keep captions 4-12 words with clear context.""",
+
+        "sports_playbyplay": """Generate energetic sports play-by-play captions.
+Examples: "HE'S THROUGH!", "LAST-SECOND FINISH!", "WHAT A COMEBACK!"
+Short, high-energy, broadcast-like. Use CAPS for peak moments.""",
+
+        "sports_hype": """Generate crowd-hype sports captions.
+Examples: "THE STADIUM ERUPTS!", "ABSOLUTE SCENES!", "GOOSEBUMPS."
+Very punchy captions (1-6 words) focused on emotion and momentum.""",
+
+        "educational_explainer": """Generate clear educational explainer captions.
+Examples: "Here's why this works.", "Step 1: isolate the variable.", "This is the core concept."
+Be concise, structured, and easy to follow. Prioritize clarity over hype.""",
+
+        "educational_aha": """Generate 'aha moment' educational captions.
+Examples: "Now it clicks.", "This changes everything.", "That's the trick."
+Highlight key insights and breakthroughs in simple language.""",
+
+        "news_breaking": """Generate urgent breaking-news style captions.
+Examples: "BREAKING UPDATE", "Developing story.", "Major reaction just in."
+Keep captions short, factual, and high-impact.""",
+
+        "news_debate": """Generate commentary/debate style captions.
+Examples: "Strong take incoming.", "This point is controversial.", "Counterargument: ..."
+Emphasize contrasting viewpoints and discussion beats.""",
+
+        "vlog_story": """Generate personal vlog storytelling captions.
+Examples: "I didn't expect this.", "Best part of the trip.", "Core memory unlocked."
+Warm, relatable tone. Keep captions 3-10 words.""",
+
+        "vlog_highlight": """Generate vlog highlight captions.
+Examples: "Peak moment.", "Worth every second.", "This made my day."
+Focus on memorable moments and emotional payoff.""",
+
+        "music_hype": """Generate concert/music hype captions.
+Examples: "THE DROP IS INSANE", "Crowd went wild.", "This hook is unreal."
+Punchy, rhythmic, high-energy captions.""",
+
+        "music_vibe": """Generate aesthetic music vibe captions.
+Examples: "Late-night energy.", "On repeat.", "Pure vibes."
+Minimal, mood-first captions (1-5 words).""",
+
+        "interview_quote": """Generate interview pull-quote captions.
+Examples: "That's a bold statement.", "He answered directly.", "Most honest line yet."
+Keep captions quotable and context-rich.""",
+
+        "interview_hot_take": """Generate hot-take interview captions.
+Examples: "This will spark debate.", "Unfiltered opinion.", "People won't agree on this."
+Emphasize controversy and reaction-worthy moments.""",
+
+        "comedy_punchline": """Generate comedy punchline captions.
+Examples: "AND THAT'S THE JOKE.", "Perfect timing.", "Crowd lost it."
+Prioritize setup/payoff rhythm and punchline emphasis.""",
+
+        "comedy_reaction": """Generate crowd/reaction comedy captions.
+Examples: "He can't keep a straight face.", "Everyone's dying laughing.", "That landed."
+Focus on reactions, laughter, and comedic aftermath.""",
+
+        "cooking_step": """Generate cooking/DIY step captions.
+Examples: "Step 2: fold gently.", "Don't overmix here.", "Now plate it."
+Instructional and clear, with practical guidance.""",
+
+        "cooking_reveal": """Generate cooking/DIY reveal captions.
+Examples: "Final reveal.", "Before vs after.", "This turned out incredible."
+Highlight transformation moments and satisfying results.""",
+
+        "fitness_coach": """Generate coaching-style fitness captions.
+Examples: "Keep your core tight.", "Drive through the heels.", "Control the tempo."
+Actionable form cues in concise language.""",
+
+        "fitness_motivation": """Generate motivational fitness captions.
+Examples: "One more rep.", "No excuses today.", "Progress over perfection."
+Short, motivating captions with high intent.""",
+
+        "entertainment_reaction": """Generate entertainment reaction captions.
+Examples: "I DID NOT SEE THAT COMING.", "That scene was wild.", "What a twist."
+Focus on emotional reactions and surprise moments.""",
+
+        "entertainment_recap": """Generate entertainment recap captions.
+Examples: "Quick recap:", "Here's what happened.", "Key moment right here."
+Summarize important scenes clearly and briefly.""",
+
+        "tv_recap": """Generate TV show recap captions.
+Examples: "Episode turning point.", "Character arc shift.", "Big reveal."
+Concise narrative recap with context.""",
+
+        "tv_dramatic": """Generate dramatic TV-style captions.
+Examples: "No one was ready for this.", "Everything changes now.", "The tension is unreal."
+Build tension and cliffhanger energy.""",
+
+        "documentary_insight": """Generate documentary insight captions.
+Examples: "Key insight:", "This explains the pattern.", "The data tells a story."
+Informative, thoughtful, and precise.""",
+
+        "documentary_wonder": """Generate documentary wonder captions.
+Examples: "Nature at full scale.", "Hard to believe this is real.", "A rare moment captured."
+Emphasize awe, discovery, and visual spectacle.""",
+
+        "esports_playcast": """Generate esports caster-style captions.
+Examples: "TEAMFIGHT NOW!", "Perfect timing on the engage.", "Objective secured."
+Fast-paced esports broadcast tone with tactical callouts.""",
+
+        "esports_clutch": """Generate esports clutch-moment captions.
+Examples: "1v3. No fear.", "Ice-cold decision making.", "CLUTCH FACTOR."
+High-tension competitive style, short and intense."""
     }
     
     style_guide = style_guides.get(style, style_guides["gaming"])
@@ -1710,10 +1822,51 @@ def get_semantic_tagging_prompt(text: str, category: str = "gaming") -> str:
         "gaming": "gaming/esports content with action, kills, victories, fails",
         "funny": "comedy content with punchlines, fails, unexpected moments", 
         "dramatic": "dramatic/cinematic content with tension, reveals, climax",
-        "action": "action-packed content with intense moments, combat, speed"
+        "action": "action-packed content with intense moments, combat, speed",
+        "podcasts": "podcast conversations with speaker turns, memorable quotes, and strong opinions",
+        "entertainment": "movie or tv reaction content with emotional beats and memorable scenes",
+        "sports": "sports content with clutch plays, goals, finishes, and crowd reactions",
+        "vlogs": "vlog storytelling content with highlights and personal moments",
+        "tv_shows": "tv show recap content with dramatic reveals and funny cuts",
+        "documentaries": "documentary content with key insights and visual spectacle moments",
+        "music": "music and concert content with drops, choruses, and audience energy",
+        "educational": "educational explainer content with clear key takeaways and aha moments",
+        "interviews": "interview content with quotable lines, reactions, and hot takes",
+        "comedy": "comedy content with setup and punchline timing",
+        "news_commentary": "news and commentary content with breaking moments and debates",
+        "cooking_diy": "cooking and diy content with transformation reveals and actionable tips",
+        "fitness": "fitness content with form cues, personal records, and motivation",
     }
+
+    normalized_category = category
+    if category.startswith("podcast_"):
+        normalized_category = "podcasts"
+    elif category.startswith("sports_"):
+        normalized_category = "sports"
+    elif category.startswith("educational_"):
+        normalized_category = "educational"
+    elif category.startswith("interview_"):
+        normalized_category = "interviews"
+    elif category.startswith("news_"):
+        normalized_category = "news_commentary"
+    elif category.startswith("vlog_"):
+        normalized_category = "vlogs"
+    elif category.startswith("music_"):
+        normalized_category = "music"
+    elif category.startswith("comedy_"):
+        normalized_category = "comedy"
+    elif category.startswith("cooking_"):
+        normalized_category = "cooking_diy"
+    elif category.startswith("fitness_"):
+        normalized_category = "fitness"
+    elif category.startswith("tv_"):
+        normalized_category = "tv_shows"
+    elif category.startswith("documentary_"):
+        normalized_category = "documentaries"
+    elif category.startswith("entertainment_"):
+        normalized_category = "entertainment"
     
-    context = category_context.get(category, category_context["gaming"])
+    context = category_context.get(normalized_category, category_context["gaming"])
     
     return f"""Analyze this text from a video caption and tag words for styling.
     
@@ -2163,4 +2316,3 @@ def enhance_captions_with_ai(
             enhanced.append(caption)
     
     return enhanced
-

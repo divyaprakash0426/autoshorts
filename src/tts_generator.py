@@ -213,11 +213,31 @@ def generate_voice_description(context: str) -> str:
     # Import here to avoid circular imports
     from ai_providers import ClipScore
     
-    # Get the preset
-    preset = ClipScore.CAPTION_STYLE_VOICE_MAP.get(
-        context, 
-        ClipScore.VOICE_PRESET_MAP.get(context, ClipScore.VOICE_PRESET_MAP["action"])
-    )
+    # Get the preset (exact style match first)
+    preset = ClipScore.CAPTION_STYLE_VOICE_MAP.get(context)
+    if not preset:
+        style_fallbacks = {
+            "podcast_": "minimal",
+            "sports_": "story_news",
+            "educational_": "dramatic",
+            "news_": "story_news",
+            "vlog_": "genz",
+            "music_": "gaming",
+            "interview_": "dramatic",
+            "comedy_": "funny",
+            "cooking_": "minimal",
+            "fitness_": "gaming",
+            "entertainment_": "dramatic",
+            "tv_": "dramatic",
+            "documentary_": "story_dramatic",
+            "esports_": "story_news",
+        }
+        for prefix, fallback_style in style_fallbacks.items():
+            if context.startswith(prefix):
+                preset = ClipScore.CAPTION_STYLE_VOICE_MAP.get(fallback_style)
+                break
+    if not preset:
+        preset = ClipScore.VOICE_PRESET_MAP.get(context, ClipScore.VOICE_PRESET_MAP["action"])
     
     logging.debug(f"Using preset voice description for '{context}': {preset.split(chr(10))[0]}...")
     return preset
