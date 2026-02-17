@@ -30,6 +30,23 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+STYLE_VOICE_FALLBACKS = {
+    "podcast_": "minimal",
+    "sports_": "story_news",
+    "educational_": "dramatic",
+    "news_": "story_news",
+    "vlog_": "genz",
+    "music_": "gaming",
+    "interview_": "dramatic",
+    "comedy_": "funny",
+    "cooking_": "minimal",
+    "fitness_": "gaming",
+    "entertainment_": "dramatic",
+    "tv_": "dramatic",
+    "documentary_": "story_dramatic",
+    "esports_": "story_news",
+}
+
 
 @dataclass
 class TTSConfig:
@@ -216,23 +233,7 @@ def generate_voice_description(context: str) -> str:
     # Get the preset (exact style match first)
     preset = ClipScore.CAPTION_STYLE_VOICE_MAP.get(context)
     if not preset:
-        style_fallbacks = {
-            "podcast_": "minimal",
-            "sports_": "story_news",
-            "educational_": "dramatic",
-            "news_": "story_news",
-            "vlog_": "genz",
-            "music_": "gaming",
-            "interview_": "dramatic",
-            "comedy_": "funny",
-            "cooking_": "minimal",
-            "fitness_": "gaming",
-            "entertainment_": "dramatic",
-            "tv_": "dramatic",
-            "documentary_": "story_dramatic",
-            "esports_": "story_news",
-        }
-        for prefix, fallback_style in style_fallbacks.items():
+        for prefix, fallback_style in STYLE_VOICE_FALLBACKS.items():
             if context.startswith(prefix):
                 preset = ClipScore.CAPTION_STYLE_VOICE_MAP.get(fallback_style)
                 break

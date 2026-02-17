@@ -1286,8 +1286,7 @@ Write 2-3 sentences per caption. Build tension, ominous tone, slow reveals. Fewe
         
         "story_dramatic": """Generate epic cinematic narration.
 Examples: "In the arena of champions, legends are born.", "The crowd holds its breath.", "One shot. One chance. Immortality awaits."
-Write 2-3 sentences per caption. Epic tone, powerful delivery, movie trailer style. Fewer captions (2-4 max)."""
-        ,
+Write 2-3 sentences per caption. Epic tone, powerful delivery, movie trailer style. Fewer captions (2-4 max).""",
         "podcast_quote": """Generate crisp pull-quote captions from podcast moments.
 Examples: "That's the real problem.", "Clip this part.", "He actually said that."
 Keep captions concise and quotable (3-10 words). Prioritize opinionated or insightful lines.""",

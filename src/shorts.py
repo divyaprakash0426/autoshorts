@@ -1810,7 +1810,10 @@ def rank_scenes_with_ai(
             selected_scenes = scenes
             if len(selected_scenes) > candidate_count:
                 # Evenly sample timeline coverage instead of action heuristics.
-                sample_indices = np.linspace(0, len(selected_scenes) - 1, candidate_count, dtype=int)
+                if candidate_count == 1:
+                    sample_indices = [len(selected_scenes) // 2]
+                else:
+                    sample_indices = np.linspace(0, len(selected_scenes) - 1, candidate_count, dtype=int)
                 selected_scenes = [selected_scenes[i] for i in sample_indices]
             top_candidates = [(s, 0.5, None) for s in selected_scenes]
             logging.info(

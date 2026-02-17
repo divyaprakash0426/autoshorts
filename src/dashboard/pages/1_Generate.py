@@ -27,6 +27,81 @@ for parent in Path(__file__).resolve().parents:
 
 
 LOGO_PATH = Path("assets/logo.png")
+VIDEO_TYPE_LABELS = {
+    "gaming": "🎮 Gaming",
+    "podcasts": "🎙️ Podcasts",
+    "entertainment": "🎬 Entertainment",
+    "sports": "⚽ Sports",
+    "vlogs": "📷 Vlogs",
+    "tv_shows": "📺 TV Shows",
+    "documentaries": "🎥 Documentaries",
+    "music": "🎵 Music",
+    "educational": "📚 Educational",
+    "interviews": "🗣️ Interviews",
+    "comedy": "😂 Comedy",
+    "news_commentary": "📰 News & Commentary",
+    "esports": "🏆 Esports / Tournaments",
+    "cooking_diy": "🍳 Cooking & DIY",
+    "fitness": "💪 Fitness",
+}
+VIDEO_TYPE_STYLES = {
+    "podcasts": {
+        "podcast_quote": ("🧠", "Quotable pull-quotes and strong takes"),
+        "podcast_highlight": ("🎧", "Conversational key-moment highlights"),
+    },
+    "entertainment": {
+        "entertainment_reaction": ("😲", "Live reactions to twists and reveals"),
+        "entertainment_recap": ("📝", "Quick recap of key scenes"),
+    },
+    "sports": {
+        "sports_playbyplay": ("📣", "Play-by-play commentator energy"),
+        "sports_hype": ("🔥", "Crowd hype and clutch moment punches"),
+    },
+    "vlogs": {
+        "vlog_story": ("📖", "Personal storytelling beats"),
+        "vlog_highlight": ("✨", "Memorable life/travel highlights"),
+    },
+    "tv_shows": {
+        "tv_recap": ("📺", "Scene recap and context"),
+        "tv_dramatic": ("🎭", "Dramatic cliffhanger style"),
+    },
+    "documentaries": {
+        "documentary_insight": ("🔍", "Informative insight narration"),
+        "documentary_wonder": ("🌍", "Awe-focused spectacle captions"),
+    },
+    "music": {
+        "music_hype": ("🎤", "Performance/drop hype captions"),
+        "music_vibe": ("🌙", "Mood and vibe-first minimal captions"),
+    },
+    "educational": {
+        "educational_explainer": ("🧩", "Step-by-step explainer captions"),
+        "educational_aha": ("💡", "Aha-moment and key insight captions"),
+    },
+    "interviews": {
+        "interview_quote": ("🗨️", "Best quotable lines"),
+        "interview_hot_take": ("⚡", "Controversial/hot-take moments"),
+    },
+    "comedy": {
+        "comedy_punchline": ("🥁", "Punchline-focused timing"),
+        "comedy_reaction": ("🤣", "Crowd and reaction-focused captions"),
+    },
+    "news_commentary": {
+        "news_breaking": ("🚨", "Breaking-news urgency style"),
+        "news_debate": ("🎙️", "Debate and counterpoint style"),
+    },
+    "esports": {
+        "esports_playcast": ("🎮", "Caster-style tactical play calls"),
+        "esports_clutch": ("🏁", "Clutch round high-tension style"),
+    },
+    "cooking_diy": {
+        "cooking_step": ("👨‍🍳", "Step-by-step instructions"),
+        "cooking_reveal": ("🍽️", "Transformation/reveal moments"),
+    },
+    "fitness": {
+        "fitness_coach": ("🏋️", "Form cues and coaching prompts"),
+        "fitness_motivation": ("💥", "Motivation and intensity boosts"),
+    },
+}
 
 
 def _build_env(overrides: dict) -> dict:
@@ -228,81 +303,6 @@ def render() -> None:
     with col_right:
         # Video type selection
         st.markdown("### 🧭 Video Type")
-        VIDEO_TYPE_LABELS = {
-            "gaming": "🎮 Gaming",
-            "podcasts": "🎙️ Podcasts",
-            "entertainment": "🎬 Entertainment",
-            "sports": "⚽ Sports",
-            "vlogs": "📷 Vlogs",
-            "tv_shows": "📺 TV Shows",
-            "documentaries": "🎥 Documentaries",
-            "music": "🎵 Music",
-            "educational": "📚 Educational",
-            "interviews": "🗣️ Interviews",
-            "comedy": "😂 Comedy",
-            "news_commentary": "📰 News & Commentary",
-            "esports": "🏆 Esports / Tournaments",
-            "cooking_diy": "🍳 Cooking & DIY",
-            "fitness": "💪 Fitness",
-        }
-        VIDEO_TYPE_STYLES = {
-            "podcasts": {
-                "podcast_quote": ("🧠", "Quotable pull-quotes and strong takes"),
-                "podcast_highlight": ("🎧", "Conversational key-moment highlights"),
-            },
-            "entertainment": {
-                "entertainment_reaction": ("😲", "Live reactions to twists and reveals"),
-                "entertainment_recap": ("📝", "Quick recap of key scenes"),
-            },
-            "sports": {
-                "sports_playbyplay": ("📣", "Play-by-play commentator energy"),
-                "sports_hype": ("🔥", "Crowd hype and clutch moment punches"),
-            },
-            "vlogs": {
-                "vlog_story": ("📖", "Personal storytelling beats"),
-                "vlog_highlight": ("✨", "Memorable life/travel highlights"),
-            },
-            "tv_shows": {
-                "tv_recap": ("📺", "Scene recap and context"),
-                "tv_dramatic": ("🎭", "Dramatic cliffhanger style"),
-            },
-            "documentaries": {
-                "documentary_insight": ("🔍", "Informative insight narration"),
-                "documentary_wonder": ("🌍", "Awe-focused spectacle captions"),
-            },
-            "music": {
-                "music_hype": ("🎤", "Performance/drop hype captions"),
-                "music_vibe": ("🌙", "Mood and vibe-first minimal captions"),
-            },
-            "educational": {
-                "educational_explainer": ("🧩", "Step-by-step explainer captions"),
-                "educational_aha": ("💡", "Aha-moment and key insight captions"),
-            },
-            "interviews": {
-                "interview_quote": ("🗨️", "Best quotable lines"),
-                "interview_hot_take": ("⚡", "Controversial/hot-take moments"),
-            },
-            "comedy": {
-                "comedy_punchline": ("🥁", "Punchline-focused timing"),
-                "comedy_reaction": ("🤣", "Crowd and reaction-focused captions"),
-            },
-            "news_commentary": {
-                "news_breaking": ("🚨", "Breaking-news urgency style"),
-                "news_debate": ("🎙️", "Debate and counterpoint style"),
-            },
-            "esports": {
-                "esports_playcast": ("🎮", "Caster-style tactical play calls"),
-                "esports_clutch": ("🏁", "Clutch round high-tension style"),
-            },
-            "cooking_diy": {
-                "cooking_step": ("👨‍🍳", "Step-by-step instructions"),
-                "cooking_reveal": ("🍽️", "Transformation/reveal moments"),
-            },
-            "fitness": {
-                "fitness_coach": ("🏋️", "Form cues and coaching prompts"),
-                "fitness_motivation": ("💥", "Motivation and intensity boosts"),
-            },
-        }
         video_type_options = list(VIDEO_TYPE_LABELS.keys())
         current_video_type = str(extras.get("VIDEO_TYPE", values.get("VIDEO_TYPE", "gaming")))
         if current_video_type not in video_type_options:
