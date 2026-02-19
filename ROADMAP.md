@@ -34,7 +34,7 @@ We will extensively use Copilot CLI to accelerate the development of these featu
 
 *Focus: Supporting all video content types and smarter scene understanding.*
 
-- [ ] **Universal Video Type Support**: Expand clipping beyond gaming to support all types of video content:
+- [x] **Universal Video Type Support**: Expand clipping beyond gaming to support all types of video content:
   - 🎙️ **Podcasts** — Detect speaker turns, highlights, and quotable moments.
   - 🎬 **Entertainment** — Movie reactions, TV show recaps, anime highlights.
   - ⚽ **Sports** — Goals, dunks, knockouts, race finishes, and clutch plays.

@@ -64,6 +64,19 @@ def get_schema() -> List[EnvSection]:
             fields=[
                 EnvField("AI_PROVIDER", "AI provider", "select", "openai", options=["openai", "gemini", "local"],
                          help_text="Which AI service to use for scene analysis"),
+                EnvField(
+                    "VIDEO_TYPE",
+                    "Video type",
+                    "select",
+                    "gaming",
+                    options=[
+                        "gaming", "podcasts", "entertainment", "sports", "vlogs",
+                        "tv_shows", "documentaries", "music", "educational",
+                        "interviews", "comedy", "news_commentary", "esports",
+                        "cooking_diy", "fitness",
+                    ],
+                    help_text="Primary source content category used for AI clipping strategy and caption style presets",
+                ),
                 EnvField("AI_ANALYSIS_ENABLED", "AI analysis enabled", "bool", True,
                          help_text="Use AI to rank scenes by content quality. Disable for faster but less smart selection"),
                 EnvField("GEMINI_API_KEY", "Gemini API key", "password", "",

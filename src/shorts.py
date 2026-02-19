@@ -1687,6 +1687,21 @@ def _get_ai_config() -> Tuple[bool, int, int]:
     return enabled, candidate_count, clip_duration
 
 
+def get_video_type() -> str:
+    """Get normalized video type from environment."""
+    return os.getenv("VIDEO_TYPE", "gaming").strip().lower()
+
+
+def should_bypass_heuristic_prefilter(
+    ai_provider: Optional[str] = None,
+    video_type: Optional[str] = None,
+) -> bool:
+    """Whether heuristic-first candidate prefilter should be skipped."""
+    provider = (ai_provider or os.getenv("AI_PROVIDER", "openai")).strip().lower()
+    vtype = (video_type or get_video_type()).strip().lower()
+    return provider in {"gemini", "openai"} and vtype != "gaming"
+
+
 def rank_scenes_with_ai(
     video_file: Path,
     scenes: List[List],
@@ -1716,16 +1731,18 @@ def rank_scenes_with_ai(
     Returns:
         List of (scene, combined_score, detected_category) tuples, sorted by score
     """
-    # Step 1: Compute heuristic scores and pre-filter
+    # Step 1: Compute heuristic scores and pre-filter (gaming flow only)
+    bypass_heuristic_prefilter = should_bypass_heuristic_prefilter()
     scene_scores = []
-    for scene in scenes:
-        score = scene_action_score(
-            scene, audio_times, audio_score, video_times, video_score
-        )
-        scene_scores.append((scene, score))
-    
-    # Sort by heuristic score and take top candidates
-    scene_scores.sort(key=lambda x: x[1], reverse=True)
+    if not bypass_heuristic_prefilter:
+        for scene in scenes:
+            score = scene_action_score(
+                scene, audio_times, audio_score, video_times, video_score
+            )
+            scene_scores.append((scene, score))
+        
+        # Sort by heuristic score and take top candidates
+        scene_scores.sort(key=lambda x: x[1], reverse=True)
     
     # Check for Deep Analysis Override
     from ai_providers import GeminiAnalyzer
@@ -1770,40 +1787,60 @@ def rank_scenes_with_ai(
         # Take ALL deep analysis moments.
         # Fill the rest of the 'candidate_count' slots with the absolute highest action scenes from heuristics.
         # This gives best of both worlds: Smarts + Explosions.
-        
-        needed = max(0, candidate_count - len(deep_candidates))
-        heuristic_backups = scene_scores[:needed]
-        
-        # Ensure heuristic backups have None category to match tuple structure
-        heuristic_backups_with_cat = []
-        for s, score in heuristic_backups:
-             heuristic_backups_with_cat.append((s, score, None))
-             
-        top_candidates = deep_candidates + heuristic_backups_with_cat
-        logging.info(f"Scene candidates: {len(deep_candidates)} Deep Analysis + {len(heuristic_backups)} Heuristic Action Backups")
+        if bypass_heuristic_prefilter:
+            top_candidates = deep_candidates[:candidate_count]
+            logging.info(
+                f"Scene candidates: {len(top_candidates)} Deep Analysis (heuristic prefilter bypass for VIDEO_TYPE={get_video_type()})"
+            )
+        else:
+            needed = max(0, candidate_count - len(deep_candidates))
+            heuristic_backups = scene_scores[:needed]
+            
+            # Ensure heuristic backups have None category to match tuple structure
+            heuristic_backups_with_cat = []
+            for s, score in heuristic_backups:
+                 heuristic_backups_with_cat.append((s, score, None))
+                 
+            top_candidates = deep_candidates + heuristic_backups_with_cat
+            logging.info(f"Scene candidates: {len(deep_candidates)} Deep Analysis + {len(heuristic_backups)} Heuristic Action Backups")
         
     else:
-        # STRATEGY: Standard Heuristic
-        # Diversity Strategy: 70% Top Action, 30% Random Exploration
-        top_tier_count = int(candidate_count * 0.7)
-        random_tier_count = candidate_count - top_tier_count
-
-        top_candidates_scores = scene_scores[:top_tier_count]
-        remaining_pool = scene_scores[top_tier_count:]
-        
-        top_candidates = []
-        # Add None category to standard candidates
-        for s, score in top_candidates_scores:
-            top_candidates.append((s, score, None))
-        
-        if remaining_pool and random_tier_count > 0:
-            random_pool = random.sample(remaining_pool, min(len(remaining_pool), random_tier_count))
-            for s, score in random_pool:
-                top_candidates.append((s, score, None))
-            logging.info(f"Scene candidates: {len(top_candidates_scores)} high-action + {len(random_pool)} random exploration.")
+        if bypass_heuristic_prefilter:
+            # Universal content mode: let AI decide from broad scene coverage.
+            selected_scenes = scenes
+            if len(selected_scenes) > candidate_count:
+                # Evenly sample timeline coverage instead of action heuristics.
+                if candidate_count == 1:
+                    sample_indices = [len(selected_scenes) // 2]
+                else:
+                    sample_indices = np.linspace(0, len(selected_scenes) - 1, candidate_count, dtype=int)
+                selected_scenes = [selected_scenes[i] for i in sample_indices]
+            top_candidates = [(s, 0.5, None) for s in selected_scenes]
+            logging.info(
+                f"Scene candidates: {len(top_candidates)} timeline-sampled (heuristic prefilter bypass for VIDEO_TYPE={get_video_type()})"
+            )
         else:
-            # Fallback
-            top_candidates = [(s, score, None) for s, score in scene_scores[:candidate_count]]
+            # STRATEGY: Standard Heuristic
+            # Diversity Strategy: 70% Top Action, 30% Random Exploration
+            top_tier_count = int(candidate_count * 0.7)
+            random_tier_count = candidate_count - top_tier_count
+
+            top_candidates_scores = scene_scores[:top_tier_count]
+            remaining_pool = scene_scores[top_tier_count:]
+            
+            top_candidates = []
+            # Add None category to standard candidates
+            for s, score in top_candidates_scores:
+                top_candidates.append((s, score, None))
+            
+            if remaining_pool and random_tier_count > 0:
+                random_pool = random.sample(remaining_pool, min(len(remaining_pool), random_tier_count))
+                for s, score in random_pool:
+                    top_candidates.append((s, score, None))
+                logging.info(f"Scene candidates: {len(top_candidates_scores)} high-action + {len(random_pool)} random exploration.")
+            else:
+                # Fallback
+                top_candidates = [(s, score, None) for s, score in scene_scores[:candidate_count]]
 
     if not top_candidates:
         return []
@@ -1892,7 +1929,9 @@ def rank_scenes_with_ai(
         
         if not clip_infos:
             logging.warning("No clips extracted for AI analysis. Using heuristic ranking.")
-            return [(s, score, "Heuristic only") for s, score in scene_scores]
+            if scene_scores:
+                return [(s, score, "Heuristic only") for s, score in scene_scores]
+            return [(s, 0.5, "Timeline sampled") for s in scenes]
         
         # Step 3: Run AI analysis (analyzes all 7 semantic types)
         # OPTIMIZATION: If we already have a detected_category from Deep Analysis, we can skip re-analysis!

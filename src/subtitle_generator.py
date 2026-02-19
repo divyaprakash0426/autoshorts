@@ -583,6 +583,24 @@ def get_caption_style() -> str:
     """
     return os.getenv("CAPTION_STYLE", "gaming").lower()
 
+VIDEO_TYPE_DEFAULT_CAPTION_STYLE = {
+    "gaming": "gaming",
+    "podcasts": "podcast_quote",
+    "entertainment": "entertainment_reaction",
+    "sports": "sports_playbyplay",
+    "vlogs": "vlog_story",
+    "tv_shows": "tv_recap",
+    "documentaries": "documentary_insight",
+    "music": "music_hype",
+    "educational": "educational_explainer",
+    "interviews": "interview_quote",
+    "comedy": "comedy_punchline",
+    "news_commentary": "news_breaking",
+    "esports": "esports_playcast",
+    "cooking_diy": "cooking_step",
+    "fitness": "fitness_coach",
+}
+
 
 def generate_subtitles(
     video_path: Path, 
@@ -643,7 +661,9 @@ def generate_subtitles(
             caption_style = ClipScore.CAPTION_STYLE_MAP.get(detected_category, "gaming")
             logging.info(f"Auto-matched caption style: {caption_style} (from category: {detected_category})")
         elif caption_style == "auto":
-            caption_style = "gaming"  # Default fallback
+            video_type = os.getenv("VIDEO_TYPE", "gaming").strip().lower()
+            caption_style = VIDEO_TYPE_DEFAULT_CAPTION_STYLE.get(video_type, "gaming")
+            logging.info(f"Auto-matched caption style: {caption_style} (from VIDEO_TYPE: {video_type})")
     
     try:
         if mode == "speech":
