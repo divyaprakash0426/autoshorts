@@ -69,10 +69,14 @@ corresponding API key, and set `DEBUG_SKIP_ANALYSIS=false` and
 
 # CLI: read videos from gameplay/ and write clips to generated/
 .venv/bin/python run.py
+
+# Or choose a specific source file/directory and output directory
+.venv/bin/python run.py --input /path/to/videos --output /path/to/clips
 ```
 
 Use the dashboard's file picker or place source videos in `gameplay/`.
-Output clips are saved in `generated/`.
+Output clips are saved in `generated/`. `--input` accepts either a single
+supported video file or a directory; `--output` is created when needed.
 
 ## Configuration
 

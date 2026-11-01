@@ -68,6 +68,9 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 # Ensure decord uses the correct backend
 decord.bridge.set_bridge('torch')
 
+# Keep CLI discovery aligned with the dashboard's supported source formats.
+SUPPORTED_VIDEO_SUFFIXES = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
+
 
 # =============================================================================
 # DEBUG CHECKPOINT SYSTEM
@@ -2587,10 +2590,53 @@ def process_video(video_file: Path, config: ProcessingConfig, output_dir: Path) 
 
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments for the shorts generator."""
-    parser = argparse.ArgumentParser(description="Generate short clips from long-form footage using GPU.")
-    return parser.parse_args()
+    parser = argparse.ArgumentParser(
+        description="Generate short clips from long-form footage using GPU."
+    )
+    parser.add_argument(
+        "--input",
+        "-i",
+        dest="input",
+        type=Path,
+        default=Path("gameplay"),
+        help="Video file or directory to process (default: gameplay).",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        dest="output",
+        type=Path,
+        default=Path("generated"),
+        help="Directory for generated clips (default: generated).",
+    )
+    return parser.parse_args(argv)
+
+
+def discover_videos(input_path: Path) -> List[Path]:
+    """Return supported video files for a single file or a directory input.
+
+    Args:
+        input_path: A video file or a directory containing videos.
+
+    Returns:
+        A sorted list of supported video paths. Empty when the path is missing,
+        is not a supported file, or contains no supported videos.
+    """
+    if input_path.is_file():
+        if input_path.suffix.lower() in SUPPORTED_VIDEO_SUFFIXES:
+            return [input_path]
+        return []
+
+    if not input_path.is_dir():
+        return []
+
+    return sorted(
+        path
+        for path in input_path.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_VIDEO_SUFFIXES
+    )
 
 
 def config_from_env() -> ProcessingConfig:
@@ -2655,19 +2701,29 @@ def update_config_with_auto_lengths(config: ProcessingConfig, video_duration: fl
 
 def main() -> None:
     """Entry point for command-line execution."""
-    # args = parse_args()
+    args = parse_args()
     config = config_from_env()
-    output_dir = Path("generated")
-    output_dir.mkdir(exist_ok=True)
 
-    gameplay_dir = Path("gameplay")
-    if not gameplay_dir.exists():
-         logging.warning("No 'gameplay' directory found. Exiting.")
-         return
+    input_path = args.input
+    if not input_path.exists():
+        logging.warning("Input path '%s' does not exist. Exiting.", input_path)
+        return
 
-    for video_file in gameplay_dir.iterdir():
-        if video_file.is_file() and video_file.suffix.lower() in [".mp4", ".mkv", ".mov"]:
-            process_video(video_file, config, output_dir)
+    video_files = discover_videos(input_path)
+    if not video_files:
+        logging.warning(
+            "No supported video files found at '%s'. Exiting.", input_path
+        )
+        return
+
+    output_dir = args.output
+    if output_dir.exists() and not output_dir.is_dir():
+        logging.error("Output path '%s' is not a directory. Exiting.", output_dir)
+        return
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for video_file in video_files:
+        process_video(video_file, config, output_dir)
 
 
 if __name__ == "__main__":
