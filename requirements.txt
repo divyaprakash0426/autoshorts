@@ -1,6 +1,5 @@
 # Core Dependencies
 cupy-cuda12x>=13.0.0
-decord>=0.6.0
 moviepy==2.2.1
 numpy<2.0.0
 opencv-python==4.9.0.80
@@ -10,6 +9,10 @@ random2==1.0.2
 soundfile==0.13.1
 tqdm
 torchcodec==0.10.0  # Matches the separately installed PyTorch 2.10
+
+# Decord - Video decoding library:
+#   GPU / CUDA build from source: make install_decord (or ./install.sh)
+#   CPU-only wheel for testing:   pip install decord
 
 # PyTorch - Install separately with CUDA support:
 #   pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128

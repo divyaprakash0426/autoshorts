@@ -52,8 +52,16 @@ except ImportError:
     cp = None
 import torch
 import torchaudio
-import decord
-from decord import VideoReader, cpu, gpu
+try:
+    import decord
+    from decord import VideoReader, cpu, gpu
+    # Ensure decord uses the correct backend
+    decord.bridge.set_bridge('torch')
+except ImportError:
+    decord = None
+    VideoReader = None
+    cpu = None
+    gpu = None
 from tqdm import tqdm
 
 # AI Provider and Subtitle modules
@@ -67,9 +75,6 @@ from subtitle_generator import generate_subtitles, is_subtitles_enabled
 
 # Configure basic logging.
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-# Ensure decord uses the correct backend
-decord.bridge.set_bridge('torch')
 
 # Keep CLI discovery aligned with the dashboard's supported source formats.
 SUPPORTED_VIDEO_SUFFIXES = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
@@ -1347,7 +1352,15 @@ def render_video_gpu(
                 bg_crop_x, bg_crop_y = int(src_w * 0.5 - bg_crop_w / 2), int(src_h * 0.5 - bg_crop_h / 2)
 
             # Main Reader - Created ONCE. Do not recreate in loop.
-            vr = VideoReader(str(params.source_path), ctx=ctx)
+            try:
+                vr = VideoReader(str(params.source_path), ctx=ctx)
+            except Exception as e:
+                if cpu is not None and ctx != cpu(0):
+                    logging.warning(f"VideoReader GPU context failed: {e}. Falling back to CPU context.")
+                    ctx = cpu(0)
+                    vr = VideoReader(str(params.source_path), ctx=ctx)
+                else:
+                    raise
 
             total_frames = int(params.duration * fps)
             src_fps_val = vr.get_avg_fps()
