@@ -197,3 +197,73 @@ def test_main_rejects_output_file(tmp_path, monkeypatch, caplog):
         shorts.main()
 
     assert "is not a directory" in caplog.text
+
+
+def test_render_video_ffmpeg_codec_selection(tmp_path, monkeypatch):
+    import subprocess
+    captured_commands = []
+
+    def fake_popen(cmd, *args, **kwargs):
+        captured_commands.append(cmd)
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 0
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.wait.return_value = 0
+        return mock_proc
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: MagicMock(returncode=0))
+
+    mock_vr = MagicMock()
+    mock_vr.get_avg_fps.return_value = 30.0
+    monkeypatch.setattr(shorts, "VideoReader", lambda *args, **kwargs: mock_vr)
+
+    mock_torch = MagicMock()
+    monkeypatch.setattr(shorts, "torch", mock_torch)
+
+    params = shorts.RenderParams(
+        source_path=tmp_path / "src.mp4",
+        start_time=0.0,
+        duration=1.0,
+        output_width=1080,
+        output_height=1920,
+        crop_x=0,
+        crop_y=0,
+        crop_w=1080,
+        crop_h=1920,
+        bg_width=1080,
+        bg_height=1920,
+        is_vertical_bg=True,
+    )
+
+    output_path = tmp_path / "out.mp4"
+
+    # 1. When CUDA is not available -> libx264
+    mock_torch.cuda.is_available.return_value = False
+    try:
+        shorts.render_video_gpu(params, output_path)
+    except Exception:
+        pass
+
+    assert len(captured_commands) >= 1
+    cmd = captured_commands[0]
+    assert "-c:v" in cmd
+    idx = cmd.index("-c:v")
+    assert cmd[idx + 1] == "libx264"
+    assert "hevc_nvenc" not in cmd
+
+    # 2. When CUDA is available -> hevc_nvenc
+    captured_commands.clear()
+    mock_torch.cuda.is_available.return_value = True
+    try:
+        shorts.render_video_gpu(params, output_path)
+    except Exception:
+        pass
+
+    assert len(captured_commands) >= 1
+    cmd = captured_commands[0]
+    assert "-c:v" in cmd
+    idx = cmd.index("-c:v")
+    assert cmd[idx + 1] == "hevc_nvenc"
+    assert "libx264" not in cmd

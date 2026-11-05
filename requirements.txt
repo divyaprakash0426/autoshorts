@@ -1,5 +1,6 @@
 # Core Dependencies
 cupy-cuda12x>=13.0.0
+decord>=0.6.0
 moviepy==2.2.1
 numpy<2.0.0
 opencv-python==4.9.0.80

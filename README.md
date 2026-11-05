@@ -98,7 +98,8 @@ See [.env.example](.env.example) for all settings and
 
 **Privacy and cost:** Cloud providers receive video content. Gemini deep analysis
 uploads the full source video; API usage may incur charges. `local` uses heuristic
-selection instead, but GPU rendering still requires NVIDIA hardware.
+selection instead. Video rendering uses GPU hardware acceleration on NVIDIA machines
+with automatic CPU fallback (libx264) when CUDA is unavailable.
 
 ## Development
 

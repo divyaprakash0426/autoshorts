@@ -45,8 +45,11 @@ load_dotenv()
 # We only import it if strictly necessary for some legacy helper, but we try to avoid it.
 # import moviepy.editor as mp # Removed
 
-import cupy as cp
-import cupyx.scipy.ndimage
+try:
+    import cupy as cp
+    import cupyx.scipy.ndimage
+except ImportError:
+    cp = None
 import torch
 import torchaudio
 import decord
@@ -1270,18 +1273,28 @@ def render_video_gpu(
     if has_valid_audio:
         cmd_ffmpeg.extend(["-i", str(temp_audio)])
 
-    cmd_ffmpeg.extend([
-        "-c:v", "hevc_nvenc",  # Use hardware encoder
-        "-preset", "slow",
-        "-tune", "hq",
-        "-rc", "vbr",
-        "-cq", "23",  # Slightly increased CQ to reduce bitrate spikes
-        "-maxrate", "80M",  # Cap bitrate to prevent buffer bloat
-        "-bufsize", "100M",
-        "-pix_fmt", "yuv420p",
-        "-g", f"{int(fps * 2)}",
-        "-bf", "2",
-    ])
+    if torch.cuda.is_available():
+        cmd_ffmpeg.extend([
+            "-c:v", "hevc_nvenc",  # Use hardware encoder
+            "-preset", "slow",
+            "-tune", "hq",
+            "-rc", "vbr",
+            "-cq", "23",  # Slightly increased CQ to reduce bitrate spikes
+            "-maxrate", "80M",  # Cap bitrate to prevent buffer bloat
+            "-bufsize", "100M",
+            "-pix_fmt", "yuv420p",
+            "-g", f"{int(fps * 2)}",
+            "-bf", "2",
+        ])
+    else:
+        logging.info("CUDA not available. Falling back to CPU video encoding (libx264).")
+        cmd_ffmpeg.extend([
+            "-c:v", "libx264",  # CPU fallback encoder
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-g", f"{int(fps * 2)}",
+        ])
 
     if has_valid_audio:
         cmd_ffmpeg.extend(["-c:a", "aac", "-b:a", "192k"])
