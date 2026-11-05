@@ -74,6 +74,7 @@ install_decord: $(VENV_DIR) install_nv_codec_headers
 	@echo "Cloning Decord..."
 	rm -rf $(DECORD_BUILD_DIR)
 	git clone --recursive $(DECORD_REPO) $(DECORD_BUILD_DIR)
+	@sed -i '13i #include <cstdint>' $(DECORD_BUILD_DIR)/src/sampler/sampler_interface.h
 	
 	@echo "Building Decord Shared Library..."
 	mkdir -p $(DECORD_BUILD_DIR)/build
@@ -124,6 +125,8 @@ install_flash_attn: $(VENV_DIR)
 install_pip_requirements: $(VENV_DIR)
 	@echo "Installing pip requirements..."
 	$(PIP) install -r requirements.txt
+	@echo "Installing Playwright chromium browser for PyCaps..."
+	$(PYTHON) -m playwright install chromium
 
 # Download TTS model for offline use
 download_tts_model: $(VENV_DIR)
